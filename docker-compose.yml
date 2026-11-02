@@ -1,0 +1,15 @@
+services:
+  firmas:
+    build: .
+    image: firmas-herramientas:1.0.0
+    container_name: firmas-herramientas
+    restart: unless-stopped
+    ports:
+      # Puerto del equipo : puerto dentro del contenedor.
+      # Cambie solo el de la izquierda si el 8090 ya esta ocupado.
+      - "8090:3000"
+    environment:
+      TZ: America/Bogota
+    volumes:
+      # Firmas y base de datos persisten aqui: respaldar esta carpeta es respaldar todo.
+      - ./data:/datos

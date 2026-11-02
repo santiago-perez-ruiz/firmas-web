@@ -1,0 +1,833 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Registros — Control de Herramientas</title>
+<link rel="stylesheet" href="/css/app.css">
+<style>
+  .envoltura { max-width: 1000px; }
+
+  .encabezado-tabla { display: flex; align-items: center; gap: 16px; margin-bottom: 18px; }
+  .contador { font-size: 14px; color: var(--tenue); }
+  .vacio { padding: 48px 20px; text-align: center; color: var(--tenue); }
+
+  /* Las dos listas. Pestanas y no un desplegable: son dos y se alternan a menudo,
+     asi que el cambio tiene que costar un toque y verse cual esta puesta. */
+  .pestanas { display: flex; gap: 8px; margin-bottom: 18px; }
+  .pestanas button {
+    display: flex; align-items: center; gap: 8px;
+    padding: 9px 16px; font: inherit; font-size: 14px; font-weight: 600;
+    color: var(--tinta-2); background: var(--papel);
+    border: 1px solid var(--linea); border-radius: 999px; cursor: pointer;
+  }
+  .pestanas button:hover { border-color: var(--azul); }
+  .pestanas button.activa { color: #fff; background: var(--azul); border-color: var(--azul); }
+  /* La cuenta va siempre, tambien en la pestana que no se esta mirando: sin ella un
+     registro detallado recien hecho parece haberse perdido desde la lista rapida. */
+  .pestanas .cuenta {
+    min-width: 20px; padding: 1px 7px; border-radius: 999px;
+    font-size: 12px; font-weight: 700;
+    color: var(--tenue); background: var(--fondo);
+  }
+  .pestanas button.activa .cuenta { color: #fff; background: rgba(255,255,255,.22); }
+
+  .pendiente-aviso {
+    display: flex; align-items: center; gap: 10px;
+    padding: 12px 16px; margin-bottom: 18px;
+    background: var(--ambar-claro); border: 1px solid #fde68a; border-radius: 10px;
+    color: var(--ambar); font-size: 14px; font-weight: 600;
+  }
+
+  /* ---- la lista: una fila por ID ---- */
+  .lista tbody tr { cursor: pointer; }
+  .lista tbody tr:hover { background: #f8fafc; }
+  .lista .id { font-weight: 700; letter-spacing: .3px; }
+  .lista .sub { font-size: 12px; color: var(--tenue); margin-top: 2px; }
+  .lista .flecha { width: 20px; text-align: right; color: var(--tenue); }
+
+  /* ---- el detalle ---- */
+  .detalle-cab {
+    display: flex; align-items: flex-start; gap: 14px;
+    padding: 18px 22px; border-bottom: 1px solid var(--linea);
+  }
+  .detalle-cab .id { font-size: 17px; font-weight: 700; letter-spacing: .3px; }
+  .detalle-cab .persona { font-size: 14px; color: var(--tinta-2); margin-top: 3px; }
+  .detalle-cab .cuando { font-size: 12px; color: var(--tenue); margin-top: 4px; }
+  .detalle-cab .hueco { flex: 1; }
+
+  .etiqueta.completa     { background: var(--verde-claro); color: var(--verde); }
+  .etiqueta.parcial      { background: var(--ambar-claro); color: var(--ambar); }
+  .etiqueta.sin-devolver { background: #fee2e2; color: var(--rojo); }
+
+  .seccion { padding: 16px 22px; }
+  .seccion + .seccion { border-top: 1px solid #e2e8f0; }
+  .seccion > h3 {
+    margin: 0 0 10px;
+    font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .7px;
+    color: var(--tenue);
+  }
+
+  .herramientas { font-size: 14px; }
+  .herramientas td { padding: 9px 0; border-bottom: 1px solid #f1f5f9; }
+  .herramientas tr:last-child td { border-bottom: none; }
+  /* La nota de la recepción detallada: renglón propio, no alarga la descripción. */
+  .herramientas td small { display: block; margin-top: 2px; font-size: 12px; color: var(--tenue); }
+  .herramientas .marca { width: 22px; color: var(--verde); font-weight: 700; }
+  .herramientas .marca.falta { color: var(--ambar); }
+  .herramientas .cierre { text-align: right; font-size: 12px; color: var(--tenue); white-space: nowrap; }
+  .herramientas .cierre.falta { color: var(--ambar); font-weight: 600; }
+
+  /* ---- las devoluciones, dentro del mismo ID ---- */
+  .devolucion {
+    margin: 0 22px 16px;
+    padding: 14px 16px;
+    background: #fffbeb;
+    border: 1px solid #fde68a; border-left: 3px solid var(--ambar);
+    border-radius: 10px;
+  }
+  .devolucion-cab { display: flex; align-items: center; gap: 10px; font-size: 13px; }
+  .devolucion-cab .codigo { font-weight: 700; }
+  .devolucion-cab .hueco { flex: 1; }
+  .devolucion-cab .cuando { font-size: 12px; color: var(--tenue); }
+  .devolucion .lista-herr { margin: 8px 0 0; font-size: 13px; color: var(--tinta-2); line-height: 1.6; }
+
+  /* ---- gestionar: armar la devolución desde el propio registro ---- */
+  .gestion { padding: 16px 22px; border-top: 1px solid #e2e8f0; background: #fffdf7; }
+  .devolver { margin: 0 0 14px; padding: 0; list-style: none; }
+  .devolver li {
+    display: flex; align-items: center; gap: 12px;
+    padding: 12px 0; border-bottom: 1px solid #f1e9d2;
+  }
+  .devolver li:last-child { border-bottom: none; }
+  .devolver input[type="checkbox"] { width: 22px; height: 22px; flex: none; accent-color: var(--ambar); }
+  .devolver .desc { flex: 1; font-size: 15px; }
+  .devolver .desc small { display: block; color: var(--tenue); font-size: 12px; margin-top: 2px; }
+  .devolver select { width: 190px; flex: none; }
+  .gestion-pie { display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
+  .gestion-pie .campo { flex: 1; min-width: 220px; }
+
+  /* ---- firmas ----
+     El marco recorta; la imagen entera sigue dentro, solo desplazada y escalada
+     para que se vea el trazo y no el lienzo vacío que lo rodea. Si se cambian
+     estas medidas hay que cambiar MARCO en el script. */
+  .firmas { display: flex; flex-wrap: wrap; gap: 18px; }
+  .firma { margin: 0; }
+  .firma .marco {
+    display: block; position: relative; overflow: hidden;
+    width: 240px; height: 72px;
+    background: #fff; border: 1px solid var(--linea); border-radius: 8px;
+    cursor: zoom-in;
+  }
+  .firma .marco:hover { border-color: var(--azul); box-shadow: 0 0 0 3px rgba(29, 78, 216, .12); }
+  .firma .marco img {
+    position: absolute; top: 0; left: 0;
+    max-width: none;                  /* el encuadre lo pone la transformación */
+    transform-origin: 0 0;
+    visibility: hidden;               /* hasta que se sabe dónde está la tinta */
+  }
+  .firma figcaption { margin-top: 5px; font-size: 11px; color: var(--tenue); }
+  .firma.falta div {
+    height: 72px; width: 240px;
+    display: flex; align-items: center; justify-content: center;
+    border: 1px dashed var(--linea); border-radius: 8px;
+    color: var(--tenue); font-size: 12px;
+  }
+
+  /* ---- avisos flotantes ----
+     El aviso vivía en un div al principio de la página: dentro de un detalle y con
+     scroll, un error no se veía. Ahora van fijos sobre todo lo demás. */
+  .avisos {
+    position: fixed; top: 18px; left: 50%; transform: translateX(-50%);
+    z-index: 60; width: min(540px, calc(100vw - 32px));
+    display: flex; flex-direction: column; gap: 10px;
+    pointer-events: none;            /* no tapa los clics de la página de debajo */
+  }
+  .nota {
+    pointer-events: auto;
+    display: flex; align-items: flex-start; gap: 11px;
+    padding: 14px 15px; border-radius: 12px;
+    font-size: 14px; line-height: 1.45; font-weight: 600;
+    border: 1px solid var(--linea); background: var(--papel);
+    box-shadow: 0 12px 32px rgba(15, 23, 42, .20);
+    animation: nota-entra .26s cubic-bezier(.2, .9, .3, 1);
+  }
+  .nota .icono {
+    flex: none; width: 22px; height: 22px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 14px; color: #fff;
+  }
+  .nota .texto { flex: 1; }
+  .nota .cerrar {
+    flex: none; border: none; background: none; cursor: pointer;
+    font-size: 20px; line-height: 1; padding: 0 2px; color: inherit; opacity: .55;
+  }
+  .nota .cerrar:hover { opacity: 1; }
+
+  .nota.ok    { background: var(--verde-claro); border-color: #bbf7d0; color: var(--verde); }
+  .nota.ok .icono { background: var(--verde); }
+  /* El error se sacude al entrar: es lo que hay que ver sí o sí. */
+  .nota.error { background: #fee2e2; border-color: #fecaca; color: #991b1b; }
+  .nota.error .icono { background: var(--rojo); }
+  .nota.error { animation: nota-entra .26s cubic-bezier(.2, .9, .3, 1), nota-sacude .38s .26s; }
+
+  .nota.saliendo { animation: nota-sale .22s ease forwards; }
+
+  @keyframes nota-entra {
+    from { opacity: 0; transform: translateY(-16px) scale(.95); }
+    to   { opacity: 1; transform: none; }
+  }
+  @keyframes nota-sale {
+    to { opacity: 0; transform: translateY(-12px) scale(.97); }
+  }
+  @keyframes nota-sacude {
+    0%, 100% { transform: none; }
+    20% { transform: translateX(-7px); }
+    40% { transform: translateX(6px); }
+    60% { transform: translateX(-4px); }
+    80% { transform: translateX(2px); }
+  }
+  /* Quien pidió menos movimiento en el sistema no tiene por qué sufrirlo aquí. */
+  @media (prefers-reduced-motion: reduce) {
+    .nota, .nota.error, .nota.saliendo { animation: none; }
+  }
+
+  /* ---- la lupa: la firma a tamaño legible ---- */
+  .lupa {
+    position: fixed; inset: 0; z-index: 50;
+    display: flex; align-items: center; justify-content: center;
+    padding: 24px;
+    background: rgba(15, 23, 42, .72);
+  }
+  .lupa-caja {
+    background: #fff; border-radius: var(--radio); box-shadow: var(--sombra);
+    max-width: 900px; width: 100%;
+  }
+  .lupa-cab {
+    display: flex; align-items: center; gap: 14px;
+    padding: 14px 18px; border-bottom: 1px solid var(--linea);
+  }
+  .lupa-cab strong { font-size: 15px; }
+  .lupa-cab .hueco { flex: 1; }
+  .lupa img { display: block; width: 100%; max-height: 60vh; object-fit: contain; padding: 18px; }
+</style>
+</head>
+<body>
+
+<div class="barra">
+  <h1>Control de Herramientas</h1>
+  <span class="sep"></span>
+  <a href="/">Recepci&oacute;n r&aacute;pida</a>
+  <a href="/detallada">Recepci&oacute;n detallada</a>
+  <a href="/registros" class="activo">Registros</a>
+  <a href="/firmar" target="_blank">Pantalla de firma &#8599;</a>
+</div>
+
+<div class="envoltura">
+  <div class="encabezado-tabla">
+    <h2 style="margin:0" id="titulo">Movimientos firmados</h2>
+    <span class="contador" id="contador"></span>
+    <span style="flex:1"></span>
+    <button class="boton secundario oculto" id="btnVolver">&#8592; Volver a la lista</button>
+    <!-- Uno u otro segun lo que se este mirando: el Excel es el historico entero,
+         el PDF es el comprobante de este registro. -->
+    <a class="boton" id="btnExcel" href="/api/export.xlsx">Descargar Excel</a>
+    <a class="boton oculto" id="btnPdf" href="#">Descargar PDF</a>
+  </div>
+  <div id="pendientes"></div>
+  <div class="pestanas oculto" id="pestanas">
+    <button type="button" data-modo="rapida">Recepciones r&aacute;pidas <span class="cuenta" id="cuentaRapida">0</span></button>
+    <button type="button" data-modo="detallada">Recepciones detalladas <span class="cuenta" id="cuentaDetallada">0</span></button>
+  </div>
+  <div id="panel"></div>
+</div>
+
+<div class="avisos" id="avisos"></div>
+
+<div class="lupa oculto" id="lupa">
+  <div class="lupa-caja">
+    <div class="lupa-cab">
+      <strong id="lupa-titulo"></strong>
+      <span class="hueco"></span>
+      <button class="boton secundario" id="lupa-cerrar">Cerrar</button>
+    </div>
+    <img id="lupa-img" alt="">
+  </div>
+</div>
+
+<script src="/js/flujo.js"></script>
+<script>
+const $ = (s) => document.querySelector(s);
+
+// Qué se está mirando. Se guarda para que un aviso del servidor repinte lo que hay
+// delante y no devuelva al almacenista a la lista mientras revisa un registro.
+let abierto = null;      // id de la entrega abierta, o null si se ve la lista
+let gestionando = null;  // id de la entrega cuya devolución se está armando
+let ultimoHistorial = { grupos: [], sueltas: [] };
+
+/**
+ * Que lista se esta mirando: 'rapida' o 'detallada'.
+ *
+ * Arranca en la rapida porque es la de todos los dias. No se reinicia al entrar y
+ * salir de un detalle a proposito: quien esta revisando las detalladas no quiere
+ * volver a la otra lista cada vez que abre un registro.
+ */
+let modoLista = 'rapida';
+
+/** Los grupos de una lista. Un registro pertenece a la pantalla que lo armo. */
+function gruposDe(modo) {
+  return (ultimoHistorial.grupos || []).filter((g) => (g.entrega.modo || 'rapida') === modo);
+}
+
+// Las mismas condiciones que ofrece la pantalla rápida al recibir.
+const ESTADOS = ['Excelente', 'Bueno', 'Regular', 'Malo', 'Con daños'];
+
+/**
+ * Las condiciones a ofrecer para una herramienta, con la suya delante si no está en
+ * la lista. La recepción detallada usa las del formulario en papel —"Mantenimiento"
+ * entre ellas—, y sin esto el select caía en "Excelente" al abrirse: devolver la
+ * herramienta le habría cambiado la condición sin que nadie lo pidiera.
+ */
+function condicionesPara(estado) {
+  return ESTADOS.includes(estado) || !estado ? ESTADOS : [estado].concat(ESTADOS);
+}
+
+function fecha(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  const p = (n) => String(n).padStart(2, '0');
+  return p(d.getDate()) + '/' + p(d.getMonth() + 1) + '/' + d.getFullYear() + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+}
+
+function fechaCorta(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  const p = (n) => String(n).padStart(2, '0');
+  return p(d.getDate()) + '/' + p(d.getMonth() + 1);
+}
+
+function escapar(s) {
+  return String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+}
+
+const ROTULO_CICLO = {
+  completa: 'Devuelta',
+  parcial: 'Devolución parcial',
+  'sin-devolver': 'Sin devolver',
+  esperando: 'Esperando firma',
+};
+
+// ---------------------------------------------------------------- la lupa
+
+function abrirLupa(url, titulo) {
+  $('#lupa-img').src = url;
+  $('#lupa-titulo').textContent = titulo;
+  $('#lupa').classList.remove('oculto');
+}
+
+function cerrarLupa() {
+  $('#lupa').classList.add('oculto');
+  $('#lupa-img').removeAttribute('src');
+}
+
+$('#lupa-cerrar').addEventListener('click', cerrarLupa);
+$('#lupa').addEventListener('click', (e) => { if (e.target === $('#lupa')) cerrarLupa(); });
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  if (!$('#lupa').classList.contains('oculto')) cerrarLupa();
+  else if (abierto !== null) verLista();
+});
+
+// ---------------------------------------------------------------- encuadre
+
+// Tiene que coincidir con .firma .marco del CSS.
+const MARCO = { ancho: 240, alto: 72 };
+
+// Dónde está la tinta de cada firma, por su URL. Medirla obliga a leer el lienzo
+// pixel a pixel, así que se hace una vez y se recuerda.
+const encuadres = new Map();
+
+/**
+ * El rectángulo que de verdad tiene trazo, o null si el lienzo está vacío.
+ * La firma se guarda con todo el ancho de la tablet alrededor y el trazo ocupa una
+ * parte pequeña; sin esto, la miniatura es un garabato ilegible.
+ */
+function medirTinta(img) {
+  const lienzo = document.createElement('canvas');
+  lienzo.width = img.naturalWidth;
+  lienzo.height = img.naturalHeight;
+  if (!lienzo.width || !lienzo.height) return null;
+
+  const ctx = lienzo.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(img, 0, 0);
+  const pixeles = ctx.getImageData(0, 0, lienzo.width, lienzo.height).data;
+
+  let x0 = lienzo.width, y0 = lienzo.height, x1 = -1, y1 = -1;
+  for (let y = 0; y < lienzo.height; y++) {
+    for (let x = 0; x < lienzo.width; x++) {
+      if (pixeles[(y * lienzo.width + x) * 4 + 3] > 24) {   // alfa: aquí hay trazo
+        if (x < x0) x0 = x;
+        if (x > x1) x1 = x;
+        if (y < y0) y0 = y;
+        if (y > y1) y1 = y;
+      }
+    }
+  }
+  if (x1 < 0) return null;
+
+  const margen = 10;                     // un respiro alrededor del trazo
+  x0 = Math.max(0, x0 - margen);
+  y0 = Math.max(0, y0 - margen);
+  x1 = Math.min(lienzo.width - 1, x1 + margen);
+  y1 = Math.min(lienzo.height - 1, y1 + margen);
+  return { x0: x0, y0: y0, ancho: x1 - x0 + 1, alto: y1 - y0 + 1 };
+}
+
+/**
+ * Encuadra la firma dentro de su marco.
+ *
+ * El PNG original se queda como está: solo se desplaza y se escala con CSS. Nada
+ * de volcar el recorte a un data URL — doce firmas en base64 dentro del DOM lo
+ * dejan pesando medio megabyte, y la imagen ya está en la caché del navegador.
+ */
+function encuadrar(img) {
+  if (img.dataset.encuadrada) return;
+  img.dataset.encuadrada = '1';
+
+  const url = img.dataset.url;
+  if (!encuadres.has(url)) {
+    let caja = null;
+    try {
+      caja = medirTinta(img);
+    } catch (e) {
+      caja = null;      // si falla la medida, se encuadra la imagen entera
+    }
+    encuadres.set(url, caja);
+  }
+
+  const caja = encuadres.get(url)
+    || { x0: 0, y0: 0, ancho: img.naturalWidth, alto: img.naturalHeight };
+  if (!caja.ancho || !caja.alto) return;
+
+  const escala = Math.min(MARCO.ancho / caja.ancho, MARCO.alto / caja.alto);
+  const dx = (MARCO.ancho - caja.ancho * escala) / 2;
+  const dy = (MARCO.alto - caja.alto * escala) / 2;
+
+  // Se leen de derecha a izquierda: llevar la esquina de la tinta al origen,
+  // escalar, y centrar lo que quede en el marco.
+  img.style.transform =
+    'translate(' + dx + 'px,' + dy + 'px) scale(' + escala + ') ' +
+    'translate(' + (-caja.x0) + 'px,' + (-caja.y0) + 'px)';
+  img.style.visibility = 'visible';
+}
+
+// El panel se repinta entero, así que los escuchadores van delegados. 'load' no
+// burbujea: se recoge en fase de captura.
+$('#panel').addEventListener('load', (e) => {
+  if (e.target.matches('img[data-firma]')) encuadrar(e.target);
+}, true);
+
+$('#panel').addEventListener('click', (e) => {
+  const img = e.target.closest('img[data-firma]');
+  if (img) {
+    // La lupa abre el archivo original: el encuadre solo mueve la miniatura.
+    abrirLupa(img.dataset.url, img.dataset.firma);
+    return;
+  }
+  if (e.target.closest('#btnGestionar')) { gestionando = abierto; pintarDetalle(); return; }
+  if (e.target.closest('#btnCancelarGestion')) { gestionando = null; pintarDetalle(); return; }
+  if (e.target.closest('#btnEnviarDev')) { enviarDevolucion(); return; }
+
+  const fila = e.target.closest('tr[data-id]');
+  if (fila) verDetalle(Number(fila.dataset.id));
+});
+
+$('#btnVolver').addEventListener('click', () => verLista());
+
+/**
+ * Aviso flotante. Se apila arriba, encima de todo, para que un error se vea aunque
+ * se esté en mitad de un detalle y con la página desplazada.
+ *
+ * El error dura mucho más y se sacude al aparecer: un "ok" se puede perder sin
+ * consecuencia, un error no.
+ */
+function avisar(texto, clase) {
+  const nota = document.createElement('div');
+  nota.className = 'nota ' + clase;
+  nota.innerHTML =
+    '<span class="icono">' + (clase === 'ok' ? '&#10003;' : '!') + '</span>' +
+    '<span class="texto"></span>' +
+    '<button class="cerrar" type="button" aria-label="Cerrar">&times;</button>';
+  // textContent y no innerHTML: el mensaje puede venir del servidor.
+  nota.querySelector('.texto').textContent = texto;
+
+  let cerrada = false;
+  function cerrar() {
+    if (cerrada) return;
+    cerrada = true;
+    nota.classList.add('saliendo');
+    setTimeout(() => nota.remove(), 240);
+  }
+  nota.querySelector('.cerrar').addEventListener('click', cerrar);
+  setTimeout(cerrar, clase === 'error' ? 12000 : 5000);
+
+  $('#avisos').appendChild(nota);
+}
+
+// ---------------------------------------------------------------- gestionar
+
+/** El panel para armar la devolución, con las herramientas que siguen fuera. */
+function bloqueGestion(g) {
+  const e = g.entrega;
+  if (e.estado !== 'firmado') return '';
+
+  if (!g.pendientes.length) {
+    return '<div class="gestion" style="color:var(--tenue);font-size:14px">' +
+      'Esta recepción está cerrada: todas las herramientas regresaron.</div>';
+  }
+
+  if (gestionando !== e.id) {
+    return '<div class="gestion">' +
+      '<button class="boton" id="btnGestionar">Gestionar recepción</button>' +
+      '<span style="margin-left:12px;font-size:13px;color:var(--tenue)">' +
+        g.pendientes.length + (g.pendientes.length === 1 ? ' herramienta sigue' : ' herramientas siguen') +
+        ' sin devolver</span>' +
+      '</div>';
+  }
+
+  const items = g.pendientes.map((h) => {
+    const opciones = condicionesPara(h.estado)
+      .map((v) => '<option' + (v === h.estado ? ' selected' : '') + '>' + escapar(v) + '</option>')
+      .join('');
+    return '<li>' +
+      '<input type="checkbox" class="marca" data-id="' + h.id + '" checked>' +
+      '<span class="desc">' + escapar((h.cantidad || 1) + ' × ' + h.descripcion) +
+        '<small>Recibido como: ' + escapar(h.estado || 'sin estado') + '</small></span>' +
+      '<select class="estado-dev">' + opciones + '</select>' +
+      '</li>';
+  }).join('');
+
+  return '<div class="gestion">' +
+    '<h3 style="margin:0 0 10px;font-size:11px;font-weight:700;text-transform:uppercase;' +
+      'letter-spacing:.7px;color:var(--tenue)">Qué regresa y en qué estado</h3>' +
+    '<ul class="devolver" id="listaDevolver">' + items + '</ul>' +
+    '<div class="gestion-pie">' +
+      '<div class="campo">' +
+        '<label for="devResponsable">Almacenista que recibe</label>' +
+        '<input type="text" id="devResponsable" autocomplete="off" value="' + escapar(e.responsable) + '">' +
+      '</div>' +
+      '<div class="campo">' +
+        '<label for="devObservaciones">Observaciones</label>' +
+        '<input type="text" id="devObservaciones" autocomplete="off" placeholder="Opcional">' +
+      '</div>' +
+      '<button class="boton" id="btnEnviarDev">Enviar devolución a la tablet</button>' +
+      '<button class="boton secundario" id="btnCancelarGestion">Cancelar</button>' +
+    '</div>' +
+    '</div>';
+}
+
+async function enviarDevolucion() {
+  const herramientas = Array.from($('#listaDevolver').querySelectorAll('li'))
+    .filter((li) => li.querySelector('.marca').checked)
+    .map((li) => ({
+      id: Number(li.querySelector('.marca').dataset.id),
+      estado: li.querySelector('.estado-dev').value,
+    }));
+  if (!herramientas.length) {
+    return avisar('Marque al menos una herramienta que regresa.', 'error');
+  }
+
+  const boton = $('#btnEnviarDev');
+  boton.disabled = true;
+  try {
+    // Empleado, cédula y departamento salen de la entrega: aquí solo viaja el vínculo.
+    const r = await fetch('/api/movimientos', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        tipo: 'DEVOLUCION',
+        entregaId: gestionando,
+        responsable: $('#devResponsable').value.trim(),
+        observaciones: $('#devObservaciones').value.trim(),
+        herramientas,
+      }),
+    });
+    const datos = await r.json();
+    if (!r.ok) throw new Error(datos.error || 'No se pudo enviar');
+
+    gestionando = null;
+    avisar(datos.codigo + ' enviado a la tablet. El empleado ya puede firmar.', 'ok');
+    cargar();
+  } catch (err) {
+    avisar(err.message, 'error');
+    boton.disabled = false;
+  }
+}
+
+// ---------------------------------------------------------------- firmas
+
+function firma(url, quien, nombre) {
+  const titulo = quien + (nombre ? ' — ' + nombre : '');
+  if (!url) {
+    return '<figure class="firma falta"><div>Sin firma</div>' +
+           '<figcaption>' + escapar(titulo) + '</figcaption></figure>';
+  }
+  return '<figure class="firma">' +
+    '<span class="marco">' +
+      '<img src="' + url + '" alt="Firma de ' + escapar(titulo) + '"' +
+        ' data-firma="' + escapar(titulo) + '" data-url="' + url + '">' +
+    '</span>' +
+    '<figcaption>' + escapar(titulo) + '</figcaption></figure>';
+}
+
+function bloqueFirmas(m) {
+  return '<div class="firmas">' +
+    firma(m.firmaEmpleadoUrl, 'Empleado', m.empleado) +
+    firma(m.firmaResponsableUrl, 'Almacenista', m.responsable) +
+    '</div>';
+}
+
+// ---------------------------------------------------------------- las dos listas
+
+/** Marca la pestana puesta y actualiza las dos cuentas. */
+function pintarPestanas() {
+  $('#pestanas').classList.remove('oculto');
+  $('#cuentaRapida').textContent = gruposDe('rapida').length;
+  $('#cuentaDetallada').textContent = gruposDe('detallada').length;
+  document.querySelectorAll('#pestanas button').forEach((b) => {
+    b.classList.toggle('activa', b.dataset.modo === modoLista);
+  });
+}
+
+document.querySelectorAll('#pestanas button').forEach((b) => {
+  b.addEventListener('click', () => {
+    if (modoLista === b.dataset.modo) return;
+    modoLista = b.dataset.modo;
+    // Cambiar de lista sale del detalle: el registro abierto es de la otra.
+    abierto = null;
+    gestionando = null;
+    pintarLista();
+    window.scrollTo(0, 0);
+  });
+});
+
+function pintarLista() {
+  const grupos = gruposDe(modoLista);
+  // Las devoluciones huerfanas vienen de bases anteriores a que quedaran atadas a su
+  // recepcion, todas de la pantalla rapida: no tienen sitio en la otra lista.
+  const sueltas = modoLista === 'rapida' ? (ultimoHistorial.sueltas || []) : [];
+
+  $('#titulo').textContent = modoLista === 'detallada'
+    ? 'Recepciones detalladas'
+    : 'Recepciones rápidas';
+  $('#btnVolver').classList.add('oculto');
+  $('#btnExcel').classList.remove('oculto');
+  $('#btnPdf').classList.add('oculto');
+  $('#contador').textContent =
+    grupos.length + (grupos.length === 1 ? ' registro' : ' registros');
+  $('#pendientes').classList.remove('oculto');
+  pintarPestanas();
+
+  if (!grupos.length && !sueltas.length) {
+    $('#panel').innerHTML = '<div class="tarjeta"><div class="vacio">' +
+      (modoLista === 'detallada'
+        ? 'Todavía no hay recepciones detalladas firmadas.'
+        : 'Todavía no hay movimientos firmados.') +
+      '</div></div>';
+    return;
+  }
+
+  const filas = grupos.map((g) => {
+    const e = g.entrega;
+    const total = e.herramientas.length;
+    const devueltas = total - g.pendientes.length;
+    const codigos = g.devoluciones.map((d) => escapar(d.codigo)).join(', ');
+
+    return '<tr data-id="' + e.id + '">' +
+      '<td><div class="id">' + escapar(e.codigo) + '</div>' +
+        (codigos ? '<div class="sub">con ' + codigos + '</div>' : '') + '</td>' +
+      '<td>' + fecha(e.firmado_en || e.creado_en) + '</td>' +
+      '<td><strong>' + escapar(e.empleado) + '</strong>' +
+        (e.cedula ? '<div class="sub">' + escapar(e.cedula) + '</div>' : '') + '</td>' +
+      '<td>' + devueltas + ' de ' + total + (total === 1 ? ' devuelta' : ' devueltas') + '</td>' +
+      '<td><span class="etiqueta ' + g.ciclo + '">' + ROTULO_CICLO[g.ciclo] + '</span></td>' +
+      '<td class="flecha">&#8250;</td>' +
+      '</tr>';
+  }).join('');
+
+  let html = '<div class="tarjeta" style="padding:6px 22px 10px">' +
+    '<div style="overflow-x:auto"><table class="lista"><thead><tr>' +
+    '<th>ID</th><th>Fecha</th><th>Empleado</th><th>Herramientas</th><th>Estado</th><th></th>' +
+    '</tr></thead><tbody>' + filas + '</tbody></table></div></div>';
+
+  // Devoluciones de bases anteriores a que quedaran atadas a su entrega. No se
+  // pierden: se muestran aparte en vez de desaparecer del histórico.
+  if (sueltas.length) {
+    html += '<div class="tarjeta"><h2>Devoluciones sin recepción asociada</h2>' +
+      sueltas.map((d) =>
+        '<div class="devolucion">' +
+          '<div class="devolucion-cab"><span class="etiqueta devolucion">DEVOLUCIÓN</span>' +
+            '<span class="codigo">' + escapar(d.codigo) + '</span>' +
+            '<span class="hueco"></span>' +
+            '<span class="cuando">' + fecha(d.firmado_en || d.creado_en) + '</span></div>' +
+          '<div class="lista-herr">' + escapar(d.empleado) + '</div>' +
+          '<div style="margin-top:12px">' + bloqueFirmas(d) + '</div>' +
+        '</div>').join('') +
+      '</div>';
+  }
+
+  $('#panel').innerHTML = html;
+}
+
+// ---------------------------------------------------------------- el detalle
+
+function pintarDetalle() {
+  const g = (ultimoHistorial.grupos || []).find((x) => x.entrega.id === abierto);
+  if (!g) {                       // el registro ya no está: se vuelve a la lista
+    verLista();
+    return;
+  }
+  const e = g.entrega;
+
+  $('#titulo').textContent = e.codigo;
+  $('#btnVolver').classList.remove('oculto');
+  $('#btnExcel').classList.add('oculto');
+  const pdf = $('#btnPdf');
+  pdf.href = '/api/entregas/' + e.id + '/pdf';
+  pdf.setAttribute('download', e.codigo + '.pdf');
+  pdf.classList.toggle('oculto', e.estado !== 'firmado');
+  $('#contador').textContent = '';
+  $('#pendientes').classList.add('oculto');
+  // Dentro de un registro las pestanas no aplican: se vuelve con "Volver a la lista".
+  $('#pestanas').classList.add('oculto');
+
+  const filas = e.herramientas.map((h) => {
+    const marca = h.devuelta ? '&#10003;' : '&#9679;';
+    const cierre = h.devuelta
+      ? 'devuelta en ' + escapar(h.devueltaEn) + ' &middot; ' + fechaCorta(h.devueltaFecha)
+      : 'pendiente';
+    return '<tr>' +
+      '<td class="marca' + (h.devuelta ? '' : ' falta') + '">' + marca + '</td>' +
+      '<td>' + escapar((h.cantidad || 1) + ' × ' + h.descripcion) +
+        (h.estado ? ' <span style="color:var(--tenue)">(' + escapar(h.estado) + ')</span>' : '') +
+        (h.observaciones ? '<small>' + escapar(h.observaciones) + '</small>' : '') + '</td>' +
+      '<td class="cierre' + (h.devuelta ? '' : ' falta') + '">' + cierre + '</td>' +
+      '</tr>';
+  }).join('');
+
+  const devoluciones = g.devoluciones.map((d) => {
+    const lista = (d.herramientas || [])
+      .map((h) => escapar((h.cantidad || 1) + ' × ' + h.descripcion))
+      .join('<br>');
+    const marca = d.estado === 'firmado'
+      ? '<span class="etiqueta devolucion">DEVOLUCIÓN</span>'
+      : '<span class="etiqueta esperando">EN LA TABLET</span>';
+    return '<div class="devolucion">' +
+      '<div class="devolucion-cab">' + marca +
+        '<span class="codigo">' + escapar(d.codigo) + '</span>' +
+        '<span class="hueco"></span>' +
+        '<span class="cuando">' + fecha(d.firmado_en || d.creado_en) + '</span>' +
+      '</div>' +
+      '<div class="lista-herr">' + lista + '</div>' +
+      (d.estado === 'firmado' ? '<div style="margin-top:12px">' + bloqueFirmas(d) + '</div>' : '') +
+      '</div>';
+  }).join('');
+
+  $('#panel').innerHTML = '<div class="tarjeta" style="padding:0">' +
+    '<div class="detalle-cab">' +
+      '<div>' +
+        // El código ya está en el encabezado de la página: aquí sobra repetirlo.
+        '<div class="persona"><strong>' + escapar(e.empleado) + '</strong>' +
+          (e.codigo_empleado ? ' &middot; ' + escapar(e.codigo_empleado) : '') +
+          (e.cedula ? ' &middot; ' + escapar(e.cedula) : '') +
+          (e.departamento ? ' &middot; ' + escapar(e.departamento) : '') + '</div>' +
+        '<div class="cuando">Recibido ' + fecha(e.firmado_en || e.creado_en) +
+          (e.responsable ? ' por ' + escapar(e.responsable) : '') + '</div>' +
+      '</div>' +
+      '<span class="hueco"></span>' +
+      '<span class="etiqueta ' + g.ciclo + '">' + ROTULO_CICLO[g.ciclo] + '</span>' +
+    '</div>' +
+
+    '<div class="seccion">' +
+      '<h3>Herramientas</h3>' +
+      '<table class="herramientas"><tbody>' + filas + '</tbody></table>' +
+    '</div>' +
+
+    (e.estado === 'firmado'
+      ? '<div class="seccion"><h3>Firmas de la recepción</h3>' + bloqueFirmas(e) + '</div>'
+      : '') +
+
+    (devoluciones ? '<div class="seccion"><h3>Devoluciones</h3></div>' + devoluciones : '') +
+    bloqueGestion(g) +
+    '</div>';
+
+  // Una imagen que ya estaba en la caché del navegador puede quedar completa antes
+  // de que el escuchador de 'load' llegue a verla.
+  $('#panel').querySelectorAll('img[data-firma]').forEach((img) => {
+    if (img.complete) encuadrar(img);
+  });
+}
+
+function verDetalle(id) {
+  abierto = id;
+  gestionando = null;
+  pintarDetalle();
+  window.scrollTo(0, 0);
+}
+
+function verLista() {
+  abierto = null;
+  gestionando = null;
+  pintarLista();
+}
+
+function pintar() {
+  // Mientras se arma una devolución no se repinta: un aviso del servidor borraría
+  // las casillas marcadas y el estado ya escrito. Es la misma regla que impide
+  // repintar un movimiento en curso en la tablet.
+  if (gestionando !== null) return;
+  if (abierto !== null) pintarDetalle();
+  else pintarLista();
+}
+
+// ---------------------------------------------------------------- carga
+
+function cargar() {
+  fetch('/api/historial', { cache: 'no-store' })
+    .then((r) => r.json())
+    .then((datos) => {
+      ultimoHistorial = datos;
+      pintar();
+    })
+    .catch(() => {
+      $('#panel').innerHTML = '<div class="tarjeta"><div class="vacio">No se pudo conectar con el servidor.</div></div>';
+    });
+  cargarPendientes();
+}
+
+// Lo que sigue en la calle: es la pregunta que el registro tiene que poder responder.
+function cargarPendientes() {
+  fetch('/api/entregas-pendientes', { cache: 'no-store' })
+    .then((r) => r.json())
+    .then((lista) => {
+      if (!lista.length) {
+        $('#pendientes').innerHTML = '';
+        return;
+      }
+      const piezas = lista.reduce((n, e) => n + e.pendientes.length, 0);
+      const detalle = lista
+        .map((e) => escapar(e.empleado) + ' (' + e.pendientes.length + ')')
+        .join(', ');
+      $('#pendientes').innerHTML =
+        '<div class="pendiente-aviso">Sin devolver: ' + piezas +
+        (piezas === 1 ? ' herramienta' : ' herramientas') + ' — ' + detalle + '</div>';
+    })
+    .catch(() => {});
+}
+
+cargar();
+
+escucharMovimientos({ alActivo: cargar, alFirmado: cargar });
+</script>
+</body>
+</html>

@@ -1,0 +1,24 @@
+# Publica la aplicacion en internet con un tunel de Cloudflare.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.tunel.yml up -d
+#
+# El tunel sale desde el contenedor hacia Cloudflare: no hay que abrir puertos
+# en el router ni exponer la IP de la empresa.
+#
+# CLAVE_ACCESO es obligatoria aqui: la URL es publica y /registros muestra
+# nombres y cedulas. Se define en el archivo .env junto a este.
+
+services:
+  firmas:
+    environment:
+      CLAVE_ACCESO: ${CLAVE_ACCESO:?Defina CLAVE_ACCESO en el archivo .env antes de publicar}
+
+  tunel:
+    image: cloudflare/cloudflared:latest
+    container_name: firmas-tunel
+    restart: unless-stopped
+    depends_on:
+      - firmas
+    # Tunel rapido: Cloudflare asigna una URL .trycloudflare.com al vuelo.
+    # La URL CAMBIA cada vez que se reinicia el contenedor.
+    command: tunnel --no-autoupdate --url http://firmas:3000

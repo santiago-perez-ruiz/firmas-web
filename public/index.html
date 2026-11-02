@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Recepción rápida — Control de Herramientas</title>
+<link rel="stylesheet" href="/css/app.css">
+<link rel="stylesheet" href="/css/operador.css">
+</head>
+<body>
+
+<div class="barra">
+  <h1>Control de Herramientas</h1>
+  <span class="sep"></span>
+  <a href="/" class="activo">Recepci&oacute;n r&aacute;pida</a>
+  <a href="/detallada">Recepci&oacute;n detallada</a>
+  <a href="/registros">Registros</a>
+  <a href="/firmar" target="_blank">Pantalla de firma &#8599;</a>
+</div>
+
+<div class="envoltura">
+
+  <div id="aviso" class="aviso oculto"></div>
+
+  <div class="estado-tablet" id="estadoTablet">
+    <span class="faro"><i></i></span>
+    <span class="info">
+      <span class="rotulo" id="rotuloEstado">Estado de la tablet</span>
+      <div class="frase" id="textoEstado">Conectando&hellip;</div>
+    </span>
+    <button class="boton peligro oculto" id="btnCancelar">Cancelar env&iacute;o</button>
+  </div>
+
+  <div class="tarjeta oculto" id="tarjetaPendientes">
+    <h2>Pendiente de devolver</h2>
+    <div class="hacia-registros">
+      <span id="textoPendientes"></span>
+      <span style="flex:1"></span>
+      <a class="boton secundario" href="/registros">Ir a registros</a>
+    </div>
+  </div>
+
+  <div class="zona" id="zonaFormulario">
+  <form id="formulario">
+    <div class="tarjeta" id="bloqueEmpleado">
+      <h2>1. Datos del empleado</h2>
+      <div class="rejilla">
+        <div>
+          <label for="empleado">Nombre del empleado *</label>
+          <input type="text" id="empleado" autocomplete="off">
+        </div>
+        <div>
+          <label for="cedula">C&eacute;dula / ID</label>
+          <input type="text" id="cedula" autocomplete="off">
+        </div>
+        <div>
+          <label for="departamento">Departamento</label>
+          <input type="text" id="departamento" autocomplete="off">
+        </div>
+        <div>
+          <label for="responsable">Almacenista responsable</label>
+          <input type="text" id="responsable" autocomplete="off">
+        </div>
+      </div>
+    </div>
+
+    <div class="tarjeta" id="bloqueHerramientas">
+      <h2>2. Herramientas</h2>
+      <table id="tablaHerr">
+        <thead>
+          <tr>
+            <th>Descripci&oacute;n</th>
+            <th class="col-cant">Cant.</th>
+            <th style="width:190px">Estado</th>
+            <th class="col-quitar"></th>
+          </tr>
+        </thead>
+        <tbody id="cuerpoHerr"></tbody>
+      </table>
+      <button type="button" class="boton secundario" id="btnAgregar" style="margin-top:14px">+ Agregar herramienta</button>
+    </div>
+
+    <div class="tarjeta">
+      <h2>3. Observaciones</h2>
+      <textarea id="observaciones" rows="2" placeholder="Opcional"></textarea>
+    </div>
+
+    <button type="submit" class="boton grande" id="btnEnviar" style="width:100%">Enviar a la tablet para firmar</button>
+  </form>
+
+  <div class="velo oculto" id="velo">
+    <div class="rueda"><span></span><span></span></div>
+    <div class="leyenda">
+      <span id="veloTexto">Esperando la firma en la tablet</span>
+      <small id="veloDetalle"></small>
+    </div>
+  </div>
+  </div>
+
+</div>
+
+<script src="/js/flujo.js"></script>
+<script src="/js/operador.js"></script>
+<script>
+// Esta pantalla es el caso de todos los dias: los campos justos. Todo el
+// comportamiento —velo de espera, estado de la tablet, envio, pendientes— vive en
+// operador.js, compartido con /detallada.
+montarOperador();
+</script>
+</body>
+</html>

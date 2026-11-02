@@ -1,0 +1,375 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Pantalla de firma</title>
+<link rel="stylesheet" href="/css/app.css">
+<style>
+  /* Nada en esta pantalla es un campo de texto: el teclado no aparece nunca. */
+  html, body {
+    height: 100%; overflow: hidden;
+    user-select: none; -webkit-user-select: none;
+    -webkit-touch-callout: none;
+    overscroll-behavior: none;
+  }
+  body { background: #0f172a; }
+
+  .pantalla {
+    position: fixed; inset: 0;
+    display: none; flex-direction: column;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  }
+  .pantalla.visible { display: flex; }
+
+  /* ---------------------------------------------------------- reposo */
+  #reposo {
+    align-items: center; justify-content: center; text-align: center;
+    color: #cbd5e1; gap: 22px;
+  }
+  #reposo .icono { font-size: 66px; }
+  #reposo h2 { margin: 0; font-size: 30px; font-weight: 600; color: #f8fafc; }
+  #reposo p { margin: 0; font-size: 17px; color: #94a3b8; max-width: 460px; line-height: 1.6; }
+  .conexion {
+    position: absolute; bottom: 22px; left: 0; right: 0;
+    font-size: 13px; color: #64748b;
+  }
+  .conexion.caida { color: #f87171; }
+
+  /* ---------------------------------------------------------- firma */
+  #firma { background: var(--fondo); }
+
+  .cabecera { padding: 14px 24px; color: #fff; display: flex; align-items: center; gap: 16px; flex: none; }
+  .cabecera.entrega    { background: #15803d; }
+  .cabecera.devolucion { background: #b45309; }
+  .cabecera .rotulo { font-size: 12px; letter-spacing: 1.6px; text-transform: uppercase; opacity: .85; }
+  .cabecera .nombre { font-size: 23px; font-weight: 700; line-height: 1.2; }
+  .cabecera .meta   { margin-left: auto; text-align: right; font-size: 13px; opacity: .9; line-height: 1.5; }
+
+  .cuerpo { flex: 1; display: flex; min-height: 0; }
+
+  .detalle {
+    width: 33%; max-width: 380px; min-width: 250px;
+    padding: 18px 22px; overflow-y: auto;
+    background: #fff; border-right: 1px solid var(--linea);
+  }
+  .detalle h3 {
+    margin: 0 0 12px; font-size: 11px; letter-spacing: 1px;
+    text-transform: uppercase; color: var(--tenue);
+  }
+  .detalle ul { margin: 0 0 18px; padding: 0; list-style: none; }
+  .detalle li {
+    padding: 11px 0; border-bottom: 1px solid #eef2f7;
+    font-size: 15px; line-height: 1.4;
+  }
+  .detalle li .cant { font-weight: 700; color: var(--azul); margin-right: 6px; }
+  .detalle li .est  { display: block; font-size: 12px; color: var(--tenue); margin-top: 3px; }
+  /* La nota de la recepcion detallada. En cursiva para que no compita con la
+     condicion: el empleado tiene que poder distinguir de un vistazo el dato del
+     almacen de la advertencia que le estan haciendo. */
+  .detalle li .nota { display: block; font-size: 12px; font-style: italic; color: var(--tenue); margin-top: 2px; }
+  .declaracion { font-size: 12.5px; line-height: 1.6; color: var(--tinta-2); font-style: italic; }
+
+  .panel { flex: 1; display: flex; flex-direction: column; padding: 18px 24px 22px; min-width: 0; }
+  .paso { display: flex; align-items: baseline; gap: 12px; margin-bottom: 12px; flex: none; }
+  .paso .num {
+    width: 26px; height: 26px; flex: none; border-radius: 50%;
+    background: var(--azul); color: #fff;
+    font-size: 13px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+    align-self: center;
+  }
+  .paso h2 { margin: 0; font-size: 19px; font-weight: 700; }
+  .paso .quien { font-size: 14px; color: var(--tenue); }
+
+  .marco {
+    flex: 1; position: relative; min-height: 0;
+    background: #fff; border: 2px dashed var(--linea); border-radius: 14px;
+    overflow: hidden;
+  }
+  .marco.tocado { border-style: solid; border-color: var(--azul); }
+  #lienzo { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  .guia {
+    position: absolute; left: 8%; right: 8%; bottom: 26%;
+    border-bottom: 1px solid var(--linea);
+    pointer-events: none;
+  }
+  .pista {
+    position: absolute; left: 0; right: 0; bottom: 14%;
+    text-align: center; font-size: 15px; color: #94a3b8;
+    pointer-events: none; transition: opacity .2s;
+  }
+  .marco.tocado .pista, .marco.tocado .guia { opacity: 0; }
+
+  .error-firma {
+    margin-top: 14px; padding: 12px 16px; flex: none;
+    background: #fee2e2; border: 1px solid #fecaca; border-radius: 10px;
+    color: #991b1b; font-size: 15px; font-weight: 600;
+  }
+
+  .acciones { display: flex; gap: 14px; margin-top: 16px; flex: none; }
+  .acciones .boton { flex: 1; padding: 18px; font-size: 18px; border-radius: 12px; }
+  .acciones .boton.confirmar { flex: 2; background: var(--verde); }
+
+  /* ---------------------------------------------------------- listo */
+  #listo {
+    align-items: center; justify-content: center; text-align: center;
+    background: var(--verde); color: #fff; gap: 18px;
+  }
+  #listo .marca { font-size: 84px; line-height: 1; }
+  #listo h2 { margin: 0; font-size: 34px; }
+  #listo p { margin: 0; font-size: 17px; opacity: .9; }
+
+  @media (max-width: 820px) {
+    .detalle { display: none; }
+    .cabecera .nombre { font-size: 19px; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ============================================================ REPOSO -->
+<section id="reposo" class="pantalla visible">
+  <div class="icono">&#9997;</div>
+  <h2>Pantalla de firma</h2>
+  <p>Esperando un movimiento de recepci&oacute;n o devoluci&oacute;n.<br>
+     El almacenista debe enviarlo desde su equipo.</p>
+  <div class="conexion" id="conexion">Conectado al servidor</div>
+</section>
+
+<!-- ============================================================= FIRMA -->
+<section id="firma" class="pantalla">
+  <header class="cabecera" id="cabecera">
+    <div>
+      <div class="rotulo" id="rotuloTipo">RECEPCI&Oacute;N DE HERRAMIENTAS</div>
+      <div class="nombre" id="nombreEmpleado"></div>
+    </div>
+    <div class="meta">
+      <div id="metaCodigo"></div>
+      <div id="metaFecha"></div>
+    </div>
+  </header>
+
+  <div class="cuerpo">
+    <aside class="detalle">
+      <h3>Herramientas</h3>
+      <ul id="listaHerramientas"></ul>
+      <h3>Declaraci&oacute;n</h3>
+      <p class="declaracion" id="textoDeclaracion"></p>
+    </aside>
+
+    <div class="panel">
+      <div class="paso">
+        <span class="num" id="numPaso">1</span>
+        <h2 id="tituloPaso">Firma del empleado</h2>
+        <span class="quien" id="subtituloPaso"></span>
+      </div>
+
+      <div class="marco" id="marco">
+        <canvas id="lienzo"></canvas>
+        <div class="guia"></div>
+        <div class="pista">Firme aqu&iacute; con el dedo o el l&aacute;piz</div>
+      </div>
+
+      <div class="error-firma oculto" id="errorFirma"></div>
+
+      <div class="acciones">
+        <button class="boton secundario" id="btnLimpiar">Borrar</button>
+        <button class="boton confirmar" id="btnConfirmar" disabled>Confirmar firma</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================= LISTO -->
+<section id="listo" class="pantalla">
+  <div class="marca">&#10003;</div>
+  <h2>Firma registrada</h2>
+  <p id="textoListo"></p>
+</section>
+
+<script src="/js/firma-canvas.js"></script>
+<script src="/js/flujo.js"></script>
+<script>
+const $ = (s) => document.querySelector(s);
+
+let movimiento = null;
+let lienzo = null;
+let paso = 1;                 // 1 = empleado, 2 = almacenista
+let firmaEmpleado = null;
+
+// ---------------------------------------------------------------- lienzo
+lienzo = LienzoFirma($('#lienzo'), {
+  alMarcar(hayTrazo) {
+    $('#btnConfirmar').disabled = !hayTrazo;
+    $('#marco').classList.toggle('tocado', hayTrazo);
+  },
+});
+
+function reiniciarLienzo() {
+  lienzo.limpiar();
+  lienzo.ajustar();
+  $('#btnConfirmar').disabled = true;
+  $('#marco').classList.remove('tocado');
+}
+
+$('#btnLimpiar').addEventListener('click', reiniciarLienzo);
+
+// ---------------------------------------------------------------- pantallas
+function mostrar(id) {
+  document.querySelectorAll('.pantalla').forEach((p) => p.classList.remove('visible'));
+  $('#' + id).classList.add('visible');
+}
+
+let temporizadorError = null;
+function mostrarError(texto) {
+  const caja = $('#errorFirma');
+  caja.textContent = texto;
+  caja.classList.remove('oculto');
+  clearTimeout(temporizadorError);
+  temporizadorError = setTimeout(() => caja.classList.add('oculto'), 9000);
+}
+
+function escapar(t) {
+  return String(t == null ? '' : t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+}
+
+function fechaLegible(iso) {
+  const d = iso ? new Date(iso) : new Date();
+  const p = (n) => String(n).padStart(2, '0');
+  return p(d.getDate()) + '/' + p(d.getMonth() + 1) + '/' + d.getFullYear() + '  ' + p(d.getHours()) + ':' + p(d.getMinutes());
+}
+
+function pintarMovimiento(mov) {
+  const esEntrega = mov.tipo === 'ENTREGA';
+  $('#cabecera').className = 'cabecera ' + (esEntrega ? 'entrega' : 'devolucion');
+  $('#rotuloTipo').textContent = esEntrega
+    ? 'RECEPCIÓN DE HERRAMIENTAS'
+    : 'DEVOLUCIÓN DE HERRAMIENTAS' + (mov.entregaCodigo ? ' — ' + mov.entregaCodigo : '');
+  $('#nombreEmpleado').textContent = mov.empleado;
+  $('#metaCodigo').textContent = mov.codigo;
+  // En una devolucion importa ver que entrega se esta cerrando.
+  $('#metaFecha').textContent = mov.entregaCodigo
+    ? 'Cierra ' + mov.entregaCodigo
+    : fechaLegible(mov.creado_en);
+
+  $('#listaHerramientas').innerHTML = mov.herramientas
+    .map((h) => {
+      const est = h.estado ? '<span class="est">Estado: ' + escapar(h.estado) + '</span>' : '';
+      // La nota solo la trae la recepcion detallada; en la rapida no hay donde ponerla.
+      const nota = h.observaciones ? '<span class="nota">' + escapar(h.observaciones) + '</span>' : '';
+      return '<li><span class="cant">' + (h.cantidad || 1) + '&times;</span>' +
+        escapar(h.descripcion) + est + nota + '</li>';
+    })
+    .join('');
+
+  // El texto llega ya resuelto del servidor: la entrega detallada deja cambiarlo y
+  // la tablet no puede tener una copia propia que lo contradiga.
+  $('#textoDeclaracion').textContent = mov.declaracion || '';
+
+  // Mostrar antes de preparar el lienzo: oculto mide 0 y no se puede escalar bien.
+  mostrar('firma');
+  irAPaso(1);
+}
+
+function irAPaso(n) {
+  paso = n;
+  const esEntrega = movimiento.tipo === 'ENTREGA';
+  $('#numPaso').textContent = n;
+  if (n === 1) {
+    $('#tituloPaso').textContent = 'Firma del empleado';
+    $('#subtituloPaso').textContent = movimiento.empleado + (esEntrega ? ' — quien recibe' : ' — quien devuelve');
+  } else {
+    $('#tituloPaso').textContent = 'Firma del almacenista';
+    $('#subtituloPaso').textContent = (movimiento.responsable || 'Responsable de almacén') + (esEntrega ? ' — quien entrega' : ' — quien recibe');
+  }
+  reiniciarLienzo();
+}
+
+// ---------------------------------------------------------------- confirmar
+$('#btnConfirmar').addEventListener('click', async () => {
+  const png = lienzo.aPng();
+  if (!png) return;
+
+  if (paso === 1) {
+    firmaEmpleado = png;
+    irAPaso(2);
+    return;
+  }
+
+  $('#btnConfirmar').disabled = true;
+  try {
+    const r = await fetch('/api/movimientos/' + movimiento.id + '/firmar', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ firmaEmpleado: firmaEmpleado, firmaResponsable: png }),
+    });
+    if (!r.ok) {
+      const e = await r.json();
+      throw new Error(e.error || 'Error al guardar');
+    }
+    $('#textoListo').textContent = movimiento.codigo + ' — ' + movimiento.empleado;
+    mostrar('listo');
+    firmaEmpleado = null;
+    movimiento = null;
+    canal.olvidar();
+    setTimeout(() => { if (!movimiento) mostrar('reposo'); }, 4000);
+  } catch (err) {
+    // Nada de alert(): en una tablet en modo quiosco bloquea la pantalla y obliga
+    // a que alguien la desbloquee a mano. El trazo se conserva para reintentar.
+    mostrarError('No se pudo guardar la firma: ' + err.message + '. Toque "Confirmar firma" para reintentar.');
+    $('#btnConfirmar').disabled = false;
+  }
+});
+
+// ---------------------------------------------------------------- servidor
+function recibir(mov) {
+  // Si es el mismo movimiento que ya se esta firmando, solo se actualizan los datos.
+  // Volver a pintarlo borraria el trazo en curso y la firma del paso 1: pasaria cada
+  // vez que la tablet se despierta o se reconecta el flujo de eventos.
+  if (mov && movimiento && mov.id === movimiento.id) {
+    movimiento = mov;
+    return;
+  }
+  movimiento = mov;
+  firmaEmpleado = null;
+  if (mov) {
+    pintarMovimiento(mov);
+    return;
+  }
+  // Al firmar, el servidor avisa enseguida que la tablet quedo libre. Si se obedeciera
+  // de inmediato, el empleado no alcanzaria a ver el acuse: lo deja su propio temporizador.
+  const visible = document.querySelector('.pantalla.visible');
+  if (!visible || visible.id !== 'listo') mostrar('reposo');
+}
+
+// `let` y no `const`: los avisos de conexion pueden llegar antes de que
+// termine la asignacion, y con `const` eso seria un error de zona muerta.
+let canal = null;
+canal = escucharMovimientos({
+  alActivo: recibir,
+  alConexion(bien) {
+    const c = $('#conexion');
+    if (bien) {
+      c.textContent = canal && canal.porSondeo ? 'Conectado (modo consulta periódica)' : 'Conectado al servidor';
+      c.classList.remove('caida');
+    } else {
+      c.textContent = 'Sin conexión con el servidor, reintentando…';
+      c.classList.add('caida');
+    }
+  },
+});
+
+// Evita el zoom por doble toque, que en medio de una firma es molesto.
+let ultimoToque = 0;
+document.addEventListener('touchend', (e) => {
+  const ahora = Date.now();
+  if (ahora - ultimoToque < 320) e.preventDefault();
+  ultimoToque = ahora;
+}, { passive: false });
+</script>
+</body>
+</html>

@@ -1,0 +1,107 @@
+/*
+ * Las dos pantallas de operador: / (entrega rapida) y /detallada.
+ *
+ * Estaba dentro de index.html hasta que aparecio la segunda pantalla. Se saco tal
+ * cual: el estado de la tablet, el velo de espera y la tabla de herramientas se ven
+ * igual en las dos a proposito, porque son el mismo gesto con mas o menos campos.
+ */
+
+#tablaHerr td { padding: 6px 6px 6px 0; border: none; }
+#tablaHerr th { border-bottom: 1px solid var(--linea); padding-left: 0; }
+.col-cant { width: 90px; }
+.col-quitar { width: 44px; }
+.quitar {
+  width: 34px; height: 34px; line-height: 1; font-size: 18px;
+  border: 1px solid var(--linea); border-radius: 8px; background: #fff; color: var(--tenue); cursor: pointer;
+}
+.quitar:hover { color: var(--rojo); border-color: #fecaca; }
+/* ---- estado de la tablet ----
+   Es lo primero que mira el almacenista antes de armar nada, asi que se lee de
+   un vistazo: color al borde, faro que late solo mientras hay alguien por firmar. */
+.estado-tablet {
+  display: flex; align-items: center; gap: 18px;
+  padding: 18px 22px; margin-bottom: 20px;
+  background: var(--papel);
+  border: 1px solid var(--linea); border-left: 5px solid var(--linea);
+  border-radius: var(--radio); box-shadow: var(--sombra);
+  transition: border-left-color .25s ease, background .25s ease;
+}
+.estado-tablet.libre  { border-left-color: var(--verde);
+  background: linear-gradient(100deg, var(--verde-claro), var(--papel) 42%); }
+.estado-tablet.espera { border-left-color: var(--azul);
+  background: linear-gradient(100deg, var(--azul-claro), var(--papel) 42%); }
+.estado-tablet.caido  { border-left-color: var(--rojo);
+  background: linear-gradient(100deg, #fee2e2, var(--papel) 42%); }
+
+.faro { position: relative; width: 14px; height: 14px; flex: none; }
+.faro i { position: absolute; inset: 0; border-radius: 50%; background: var(--linea); }
+.estado-tablet.libre  .faro i { background: var(--verde); }
+.estado-tablet.espera .faro i { background: var(--azul); }
+.estado-tablet.caido  .faro i { background: var(--rojo); }
+/* La onda sale solo mientras se espera una firma: si estuviera siempre, dejaria
+   de significar nada. */
+.estado-tablet.espera .faro::after {
+  content: ''; position: absolute; inset: 0; border-radius: 50%;
+  background: var(--azul); animation: onda 1.7s ease-out infinite;
+}
+@keyframes onda {
+  0%   { transform: scale(1); opacity: .5; }
+  100% { transform: scale(3); opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .estado-tablet.espera .faro::after { animation: none; opacity: .3; }
+}
+
+.estado-tablet .info { flex: 1; min-width: 0; }
+.estado-tablet .rotulo {
+  font-size: 11px; font-weight: 700; letter-spacing: .7px;
+  text-transform: uppercase; color: var(--tenue);
+}
+.estado-tablet .frase { font-size: 16px; font-weight: 600; margin-top: 3px; }
+.estado-tablet .frase .quien { font-weight: 800; }
+
+/* ---- espera: mientras la tablet tiene el movimiento ----
+   El formulario se bloquea a proposito. Solo puede haber un movimiento activo, y
+   armar otro encima cancela el anterior sin avisar: mejor que no se pueda. */
+.zona { position: relative; }
+.velo {
+  position: absolute; inset: -6px; z-index: 5;
+  display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 16px;
+  border-radius: var(--radio);
+  background: rgba(241, 245, 249, .78);
+  backdrop-filter: blur(2.5px); -webkit-backdrop-filter: blur(2.5px);
+  animation: velo-entra .22s ease;
+}
+@keyframes velo-entra { from { opacity: 0; } to { opacity: 1; } }
+
+/* Dos anillos que giran a distinta velocidad y en sentido contrario. */
+.rueda { position: relative; width: 62px; height: 62px; }
+.rueda span {
+  position: absolute; inset: 0; border-radius: 50%;
+  border: 3px solid transparent;
+}
+.rueda span:nth-child(1) {
+  border-top-color: var(--azul); border-right-color: var(--azul);
+  animation: girar 1.1s cubic-bezier(.6, .2, .4, .8) infinite;
+}
+.rueda span:nth-child(2) {
+  inset: 11px; border-bottom-color: #93c5fd; border-left-color: #93c5fd;
+  animation: girar 1.6s linear infinite reverse;
+}
+@keyframes girar { to { transform: rotate(360deg); } }
+
+.velo .leyenda { text-align: center; font-size: 15px; color: var(--tinta-2); font-weight: 600; }
+.velo .leyenda small { display: block; margin-top: 4px; font-size: 13px; font-weight: 400; color: var(--tenue); }
+
+@media (prefers-reduced-motion: reduce) {
+  .rueda span { animation-duration: 3s; }
+  .velo { animation: none; }
+}
+
+/* Las devoluciones no se arman aquí: se gestionan desde el registro de su
+   entrega, que es donde se ve qué falta por devolver. */
+.hacia-registros {
+  display: flex; align-items: center; gap: 12px;
+  font-size: 14px; color: var(--tinta-2);
+}
+.hacia-registros .cuantas { font-weight: 700; color: var(--ambar); }

@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Recepción detallada — Control de Herramientas</title>
+<link rel="stylesheet" href="/css/app.css">
+<link rel="stylesheet" href="/css/operador.css">
+<style>
+  /* La tabla gana una columna respecto a la pantalla rapida, asi que la descripcion
+     cede sitio a las notas en vez de empujar el boton de quitar fuera de la tarjeta. */
+  .col-condicion { width: 170px; }
+  .col-notas { width: 28%; }
+
+  /* La declaracion es lo unico que el empleado va a leer entero en la tablet: se
+     edita en un cuadro alto, no en una linea que obligue a desplazar para releerla. */
+  #declaracion { min-height: 76px; resize: vertical; }
+  .pie-campo { display: block; margin-top: 6px; font-size: 12px; color: var(--tenue); }
+</style>
+</head>
+<body>
+
+<div class="barra">
+  <h1>Control de Herramientas</h1>
+  <span class="sep"></span>
+  <a href="/">Recepci&oacute;n r&aacute;pida</a>
+  <a href="/detallada" class="activo">Recepci&oacute;n detallada</a>
+  <a href="/registros">Registros</a>
+  <a href="/firmar" target="_blank">Pantalla de firma &#8599;</a>
+</div>
+
+<div class="envoltura">
+
+  <div id="aviso" class="aviso oculto"></div>
+
+  <div class="estado-tablet" id="estadoTablet">
+    <span class="faro"><i></i></span>
+    <span class="info">
+      <span class="rotulo" id="rotuloEstado">Estado de la tablet</span>
+      <div class="frase" id="textoEstado">Conectando&hellip;</div>
+    </span>
+    <button class="boton peligro oculto" id="btnCancelar">Cancelar env&iacute;o</button>
+  </div>
+
+  <div class="tarjeta oculto" id="tarjetaPendientes">
+    <h2>Pendiente de devolver</h2>
+    <div class="hacia-registros">
+      <span id="textoPendientes"></span>
+      <span style="flex:1"></span>
+      <a class="boton secundario" href="/registros">Ir a registros</a>
+    </div>
+  </div>
+
+  <div class="zona" id="zonaFormulario">
+  <form id="formulario">
+    <div class="tarjeta">
+      <h2>1. Datos del registro y empleado</h2>
+      <div class="rejilla">
+        <div>
+          <label for="codigoEmpleado">C&oacute;digo de empleado</label>
+          <input type="text" id="codigoEmpleado" autocomplete="off" placeholder="Ej. EMP-042">
+        </div>
+        <div>
+          <label for="empleado">Nombre del empleado *</label>
+          <input type="text" id="empleado" autocomplete="off">
+        </div>
+        <div>
+          <label for="cedula">C&eacute;dula / ID</label>
+          <input type="text" id="cedula" autocomplete="off">
+        </div>
+        <div>
+          <label for="departamento">Departamento</label>
+          <input type="text" id="departamento" autocomplete="off">
+        </div>
+        <div>
+          <label for="responsable">Entregado por (almacenista)</label>
+          <input type="text" id="responsable" autocomplete="off">
+        </div>
+      </div>
+    </div>
+
+    <div class="tarjeta" id="bloqueHerramientas">
+      <h2>2. Detalle de herramientas y equipos</h2>
+      <table id="tablaHerr">
+        <thead>
+          <tr>
+            <th>Descripci&oacute;n</th>
+            <th class="col-cant">Cant.</th>
+            <th class="col-condicion">Estado / Condici&oacute;n</th>
+            <th class="col-notas">Observaciones / Notas</th>
+            <th class="col-quitar"></th>
+          </tr>
+        </thead>
+        <tbody id="cuerpoHerr"></tbody>
+      </table>
+      <button type="button" class="boton secundario" id="btnAgregar" style="margin-top:14px">+ Agregar herramienta</button>
+    </div>
+
+    <div class="tarjeta">
+      <h2>3. Declaraci&oacute;n que firma el empleado</h2>
+      <textarea id="declaracion" rows="3"></textarea>
+      <small class="pie-campo">Es el texto que aparece en la tablet junto a la firma y queda impreso en el comprobante.</small>
+    </div>
+
+    <div class="tarjeta">
+      <h2>4. Observaciones</h2>
+      <textarea id="observaciones" rows="2" placeholder="Opcional"></textarea>
+    </div>
+
+    <button type="submit" class="boton grande" id="btnEnviar" style="width:100%">Enviar a la tablet para firmar</button>
+  </form>
+
+  <div class="velo oculto" id="velo">
+    <div class="rueda"><span></span><span></span></div>
+    <div class="leyenda">
+      <span id="veloTexto">Esperando la firma en la tablet</span>
+      <small id="veloDetalle"></small>
+    </div>
+  </div>
+  </div>
+
+</div>
+
+<script src="/js/flujo.js"></script>
+<script src="/js/operador.js"></script>
+<script>
+/**
+ * La recepcion que no es la de todos los dias: la que necesita ficha del empleado,
+ * notas por herramienta y su propia declaracion. Es el
+ * formulario de `Formulario_Entrega_Devolucion_Herramientas.xlsx` llevado a la
+ * pantalla, y por eso trae las condiciones de ese papel y no las de la casa. El ID de
+ * transaccion no se pide: lo pone el servidor en su propia serie (TRXD-2026-NNN).
+ *
+ * Todo lo que no son campos —el velo, el estado de la tablet, el envio, la lista de
+ * pendientes— sale de operador.js, el mismo que usa la pantalla rapida.
+ */
+const $ = (s) => document.querySelector(s);
+
+// Las cuatro condiciones del formulario en papel. La pantalla rapida usa las de la
+// casa, que anaden "Malo" y "Con danos": aqui se respeta el documento.
+const CONDICIONES = ['Excelente', 'Bueno', 'Regular', 'Mantenimiento'];
+
+// El texto por defecto lo dice el servidor, no esta pagina: lo comparten la tablet y
+// el comprobante en PDF, y una copia aqui seria la que se quedaria vieja.
+let declaracionPorDefecto = '';
+
+function ponerDeclaracion() {
+  $('#declaracion').value = declaracionPorDefecto;
+}
+
+fetch('/api/declaraciones', { cache: 'no-store' })
+  .then((r) => r.json())
+  .then((d) => {
+    declaracionPorDefecto = d.ENTREGA || '';
+    // Solo si el almacenista no se adelanto a escribir mientras cargaba.
+    if (!$('#declaracion').value.trim()) ponerDeclaracion();
+  })
+  .catch(() => {
+    $('#declaracion').placeholder = 'En blanco se usa la declaración de siempre.';
+  });
+
+montarOperador({
+  // De aqui salen los codigos TRXD-2026-NNN y la segunda lista de /registros.
+  modo: 'detallada',
+  estados: CONDICIONES,
+  conNotas: true,
+  leerExtra() {
+    const texto = $('#declaracion').value.trim();
+    return {
+      codigoEmpleado: $('#codigoEmpleado').value.trim(),
+      // Sin tocar se manda vacio, y el movimiento queda apuntando al texto por
+      // defecto en vez de a una copia: si algun dia se corrige la redaccion, la
+      // correccion alcanza tambien a lo ya firmado.
+      declaracion: texto === declaracionPorDefecto ? '' : texto,
+    };
+  },
+  limpiarExtra: ponerDeclaracion,
+});
+</script>
+</body>
+</html>

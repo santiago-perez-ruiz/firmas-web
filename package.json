@@ -1,0 +1,19 @@
+{
+  "name": "firmas-herramientas",
+  "version": "1.0.0",
+  "description": "Pantalla de firma para entrega y devolucion de herramientas",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.7.0",
+    "exceljs": "^4.4.0",
+    "express": "^4.21.2",
+    "pdfkit": "^0.20.2"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

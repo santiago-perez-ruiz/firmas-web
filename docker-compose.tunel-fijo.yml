@@ -1,0 +1,22 @@
+# Tunel con nombre y dominio propio: la URL NO cambia al reiniciar.
+#
+#   1. En Cloudflare Zero Trust > Networks > Tunnels, cree un tunel y copie su token.
+#   2. Pongalo en .env como CLOUDFLARE_TUNNEL_TOKEN=...
+#   3. En el panel del tunel, apunte el hostname publico a http://firmas:3000
+#   4. docker compose -f docker-compose.yml -f docker-compose.tunel-fijo.yml up -d
+#
+# Requiere una cuenta de Cloudflare con un dominio. Encima de esto se puede
+# activar Cloudflare Access para exigir correo corporativo antes de entrar.
+
+services:
+  firmas:
+    environment:
+      CLAVE_ACCESO: ${CLAVE_ACCESO:?Defina CLAVE_ACCESO en el archivo .env antes de publicar}
+
+  tunel:
+    image: cloudflare/cloudflared:latest
+    container_name: firmas-tunel
+    restart: unless-stopped
+    depends_on:
+      - firmas
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN:?Falta CLOUDFLARE_TUNNEL_TOKEN en .env}
