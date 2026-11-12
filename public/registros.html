@@ -108,6 +108,45 @@
   .devolver select { width: 190px; flex: none; }
   .gestion-pie { display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
   .gestion-pie .campo { flex: 1; min-width: 220px; }
+  .gestion h3 {
+    margin: 0 0 10px;
+    font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .7px;
+    color: var(--tenue);
+  }
+
+  /* Devolución o cambio. Solo en las detalladas: en las rápidas no se pinta. El cambio
+     de opción no repinta el bloque, solo alterna esta clase, para no perder lo ya
+     marcado o escrito al ir y volver. */
+  .gestion-tipo { display: inline-flex; gap: 6px; margin-bottom: 14px; }
+  .gestion-tipo button {
+    padding: 7px 14px; font: inherit; font-size: 13px; font-weight: 600;
+    color: var(--tinta-2); background: var(--papel);
+    border: 1px solid var(--linea); border-radius: 999px; cursor: pointer;
+  }
+  .gestion-tipo button.activa { color: #fff; background: var(--ambar); border-color: var(--ambar); }
+  .gestion .solo-cambio { display: none; }
+  .gestion.en-cambio .solo-cambio { display: block; }
+
+  /* ---- la herramienta que entra en un cambio: se escribe siempre a mano ---- */
+  .recibe { margin: 4px 0 16px; padding-top: 12px; border-top: 1px dashed #f1e9d2; }
+  .recibe-fila { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+  .recibe-fila .rc-desc { flex: 2; min-width: 200px; }
+  .recibe-fila .rc-cant { width: 80px; flex: none; }
+  .recibe-fila .rc-estado { width: 160px; flex: none; }
+  .recibe-fila .rc-obs { flex: 2; min-width: 180px; }
+  .recibe-fila .rc-quitar {
+    flex: none; border: none; background: none; cursor: pointer;
+    font-size: 20px; line-height: 1; padding: 0 4px; color: var(--tenue);
+  }
+  .recibe-fila .rc-quitar:hover { color: var(--rojo); }
+
+  /* ---- el cambio, en la sección de movimientos del detalle ---- */
+  .etiqueta.cambio { background: #ede9fe; color: #6d28d9; }
+  .devolucion.cambio { background: #f5f3ff; border-color: #ddd6fe; border-left-color: #7c3aed; }
+  .devolucion .sentido { margin-top: 8px; font-size: 13px; color: var(--tinta-2); line-height: 1.6; }
+  .devolucion .sentido strong {
+    display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .6px; color: var(--tenue);
+  }
 
   /* ---- firmas ----
      El marco recorta; la imagen entera sigue dentro, solo desplazada y escalada
@@ -264,7 +303,8 @@ const $ = (s) => document.querySelector(s);
 // Qué se está mirando. Se guarda para que un aviso del servidor repinte lo que hay
 // delante y no devuelva al almacenista a la lista mientras revisa un registro.
 let abierto = null;      // id de la entrega abierta, o null si se ve la lista
-let gestionando = null;  // id de la entrega cuya devolución se está armando
+let gestionando = null;  // id de la entrega cuya devolución o cambio se está armando
+let gestionModo = 'devolucion';  // 'devolucion' | 'cambio' (el cambio, solo en detalladas)
 let ultimoHistorial = { grupos: [], sueltas: [] };
 
 /**
@@ -283,6 +323,10 @@ function gruposDe(modo) {
 
 // Las mismas condiciones que ofrece la pantalla rápida al recibir.
 const ESTADOS = ['Excelente', 'Bueno', 'Regular', 'Malo', 'Con daños'];
+
+// Las de la recepción detallada (las del formulario en papel). El cambio solo se
+// ofrece ahí, así que la herramienta que entra se describe con estas.
+const CONDICIONES_DETALLADA = ['Excelente', 'Bueno', 'Regular', 'Mantenimiento'];
 
 /**
  * Las condiciones a ofrecer para una herramienta, con la suya delante si no está en
@@ -436,9 +480,23 @@ $('#panel').addEventListener('click', (e) => {
     abrirLupa(img.dataset.url, img.dataset.firma);
     return;
   }
-  if (e.target.closest('#btnGestionar')) { gestionando = abierto; pintarDetalle(); return; }
+  if (e.target.closest('#btnGestionar')) {
+    gestionando = abierto;
+    gestionModo = 'devolucion';
+    pintarDetalle();
+    return;
+  }
   if (e.target.closest('#btnCancelarGestion')) { gestionando = null; pintarDetalle(); return; }
-  if (e.target.closest('#btnEnviarDev')) { enviarDevolucion(); return; }
+  const opcion = e.target.closest('[data-gmodo]');
+  if (opcion) { ponerModoGestion(opcion.dataset.gmodo); return; }
+  if (e.target.closest('#btnOtraRecibe')) { agregarRecibe(); return; }
+  const quitar = e.target.closest('.rc-quitar');
+  if (quitar) { quitarRecibe(quitar.closest('.recibe-fila')); return; }
+  if (e.target.closest('#btnEnviarDev')) {
+    if (gestionModo === 'cambio') enviarCambio();
+    else enviarDevolucion();
+    return;
+  }
 
   const fila = e.target.closest('tr[data-id]');
   if (fila) verDetalle(Number(fila.dataset.id));
@@ -509,10 +567,33 @@ function bloqueGestion(g) {
       '</li>';
   }).join('');
 
-  return '<div class="gestion">' +
-    '<h3 style="margin:0 0 10px;font-size:11px;font-weight:700;text-transform:uppercase;' +
-      'letter-spacing:.7px;color:var(--tenue)">Qué regresa y en qué estado</h3>' +
+  // El cambio solo se ofrece en las detalladas (decisión cerrada), aunque el servidor
+  // lo acepte en las dos. En una rápida el bloque queda como siempre.
+  const conCambio = e.modo === 'detallada';
+  if (!conCambio) gestionModo = 'devolucion';
+  const cambio = gestionModo === 'cambio';
+
+  const selector = conCambio
+    ? '<div class="gestion-tipo" role="group" aria-label="Qué se gestiona">' +
+        '<button type="button" data-gmodo="devolucion"' + (cambio ? '' : ' class="activa"') + '>Devolución</button>' +
+        '<button type="button" data-gmodo="cambio"' + (cambio ? ' class="activa"' : '') + '>Cambio</button>' +
+      '</div>'
+    : '';
+
+  // La herramienta que entra: siempre en blanco, sin heredar nada de la que sale.
+  const recibe = conCambio
+    ? '<div class="recibe solo-cambio">' +
+        '<h3>Herramienta que recibe</h3>' +
+        '<div id="listaRecibe">' + filaRecibe() + '</div>' +
+        '<button type="button" class="boton secundario" id="btnOtraRecibe">+ otra</button>' +
+      '</div>'
+    : '';
+
+  return '<div class="gestion' + (cambio ? ' en-cambio' : '') + '" id="gestion">' +
+    selector +
+    '<h3 id="tituloDevolver">' + (cambio ? 'Herramienta que sale y en qué estado' : 'Qué regresa y en qué estado') + '</h3>' +
     '<ul class="devolver" id="listaDevolver">' + items + '</ul>' +
+    recibe +
     '<div class="gestion-pie">' +
       '<div class="campo">' +
         '<label for="devResponsable">Almacenista que recibe</label>' +
@@ -522,32 +603,83 @@ function bloqueGestion(g) {
         '<label for="devObservaciones">Observaciones</label>' +
         '<input type="text" id="devObservaciones" autocomplete="off" placeholder="Opcional">' +
       '</div>' +
-      '<button class="boton" id="btnEnviarDev">Enviar devolución a la tablet</button>' +
+      '<button class="boton" id="btnEnviarDev">' + (cambio ? 'Enviar cambio a la tablet' : 'Enviar devolución a la tablet') + '</button>' +
       '<button class="boton secundario" id="btnCancelarGestion">Cancelar</button>' +
     '</div>' +
     '</div>';
 }
 
-async function enviarDevolucion() {
-  const herramientas = Array.from($('#listaDevolver').querySelectorAll('li'))
+/** Un renglón en blanco de "Herramienta que recibe". */
+function filaRecibe() {
+  const opciones = CONDICIONES_DETALLADA.map((v) => '<option>' + escapar(v) + '</option>').join('');
+  return '<div class="recibe-fila">' +
+    '<input type="text" class="rc-desc" autocomplete="off" placeholder="Descripción" aria-label="Descripción">' +
+    '<input type="text" class="rc-cant" inputmode="numeric" value="1" aria-label="Cantidad">' +
+    '<select class="rc-estado" aria-label="Estado">' + opciones + '</select>' +
+    '<input type="text" class="rc-obs" autocomplete="off" placeholder="Observaciones (opcional)" aria-label="Observaciones">' +
+    '<button type="button" class="rc-quitar" aria-label="Quitar">&times;</button>' +
+    '</div>';
+}
+
+/**
+ * Pasa de devolución a cambio y al revés sin repintar: solo alterna la clase y los
+ * rótulos, para que lo marcado y lo escrito sigan ahí al volver.
+ */
+function ponerModoGestion(modo) {
+  const caja = $('#gestion');
+  if (!caja) return;
+  gestionModo = modo === 'cambio' ? 'cambio' : 'devolucion';
+  const cambio = gestionModo === 'cambio';
+  caja.classList.toggle('en-cambio', cambio);
+  caja.querySelectorAll('[data-gmodo]').forEach((b) => {
+    b.classList.toggle('activa', b.dataset.gmodo === gestionModo);
+  });
+  $('#tituloDevolver').textContent = cambio ? 'Herramienta que sale y en qué estado' : 'Qué regresa y en qué estado';
+  $('#btnEnviarDev').textContent = cambio ? 'Enviar cambio a la tablet' : 'Enviar devolución a la tablet';
+}
+
+function agregarRecibe() {
+  $('#listaRecibe').insertAdjacentHTML('beforeend', filaRecibe());
+  const filas = $('#listaRecibe').querySelectorAll('.recibe-fila');
+  filas[filas.length - 1].querySelector('.rc-desc').focus();
+}
+
+/** Quita un renglón; si es el único, lo deja en blanco en vez de dejar el bloque vacío. */
+function quitarRecibe(fila) {
+  if (!fila) return;
+  if ($('#listaRecibe').querySelectorAll('.recibe-fila').length > 1) {
+    fila.remove();
+    return;
+  }
+  fila.querySelector('.rc-desc').value = '';
+  fila.querySelector('.rc-cant').value = '1';
+  fila.querySelector('.rc-estado').selectedIndex = 0;
+  fila.querySelector('.rc-obs').value = '';
+}
+
+/** Las herramientas marcadas en la lista de pendientes, con el estado elegido. */
+function marcadas() {
+  return Array.from($('#listaDevolver').querySelectorAll('li'))
     .filter((li) => li.querySelector('.marca').checked)
     .map((li) => ({
       id: Number(li.querySelector('.marca').dataset.id),
       estado: li.querySelector('.estado-dev').value,
     }));
-  if (!herramientas.length) {
-    return avisar('Marque al menos una herramienta que regresa.', 'error');
-  }
+}
 
+/**
+ * Manda la devolución o el cambio a la tablet. Empleado, cédula, departamento y
+ * declaración salen de la recepción en el servidor: aquí solo viaja el vínculo.
+ */
+async function enviarGestion(tipo, herramientas) {
   const boton = $('#btnEnviarDev');
   boton.disabled = true;
   try {
-    // Empleado, cédula y departamento salen de la entrega: aquí solo viaja el vínculo.
     const r = await fetch('/api/movimientos', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        tipo: 'DEVOLUCION',
+        tipo,
         entregaId: gestionando,
         responsable: $('#devResponsable').value.trim(),
         observaciones: $('#devObservaciones').value.trim(),
@@ -564,6 +696,42 @@ async function enviarDevolucion() {
     avisar(err.message, 'error');
     boton.disabled = false;
   }
+}
+
+function enviarDevolucion() {
+  const herramientas = marcadas();
+  if (!herramientas.length) {
+    return avisar('Marque al menos una herramienta que regresa.', 'error');
+  }
+  enviarGestion('DEVOLUCION', herramientas);
+}
+
+function enviarCambio() {
+  const salen = marcadas().map((h) => ({ ...h, sentido: 'devuelve' }));
+  if (!salen.length) {
+    return avisar('Marque al menos una herramienta que sale.', 'error');
+  }
+
+  // Un renglón del todo en blanco no cuenta (el "+ otra" de más). Uno con algo
+  // escrito pero sin descripción sí es un error: la tablet no sabría qué se lleva.
+  const filas = Array.from($('#listaRecibe').querySelectorAll('.recibe-fila')).map((f) => ({
+    descripcion: f.querySelector('.rc-desc').value.trim(),
+    cantidad: f.querySelector('.rc-cant').value.trim() || '1',
+    estado: f.querySelector('.rc-estado').value,
+    observaciones: f.querySelector('.rc-obs').value.trim(),
+  }));
+  if (filas.some((h) => !h.descripcion && h.observaciones)) {
+    return avisar('Cada herramienta que recibe necesita una descripción.', 'error');
+  }
+  const entran = filas.filter((h) => h.descripcion).map((h) => ({ ...h, sentido: 'recibe' }));
+  if (!entran.length) {
+    return avisar('Escriba al menos una herramienta que recibe, con su descripción.', 'error');
+  }
+  if (entran.some((h) => !(Number(h.cantidad) >= 1))) {
+    return avisar('La cantidad de cada herramienta que recibe debe ser 1 o más.', 'error');
+  }
+
+  enviarGestion('CAMBIO', salen.concat(entran));
 }
 
 // ---------------------------------------------------------------- firmas
@@ -706,31 +874,50 @@ function pintarDetalle() {
   const filas = e.herramientas.map((h) => {
     const marca = h.devuelta ? '&#10003;' : '&#9679;';
     const cierre = h.devuelta
-      ? 'devuelta en ' + escapar(h.devueltaEn) + ' &middot; ' + fechaCorta(h.devueltaFecha)
+      ? (h.cerradaPor === 'CAMBIO' ? 'cambiada en ' : 'devuelta en ') +
+        escapar(h.devueltaEn) + ' &middot; ' + fechaCorta(h.devueltaFecha)
       : 'pendiente';
     return '<tr>' +
       '<td class="marca' + (h.devuelta ? '' : ' falta') + '">' + marca + '</td>' +
       '<td>' + escapar((h.cantidad || 1) + ' × ' + h.descripcion) +
         (h.estado ? ' <span style="color:var(--tenue)">(' + escapar(h.estado) + ')</span>' : '') +
+        (h.llegoEn ? '<small>entró en ' + escapar(h.llegoEn) +
+          (h.llegoFecha ? ' &middot; ' + fechaCorta(h.llegoFecha) : '') + '</small>' : '') +
         (h.observaciones ? '<small>' + escapar(h.observaciones) + '</small>' : '') + '</td>' +
       '<td class="cierre' + (h.devuelta ? '' : ' falta') + '">' + cierre + '</td>' +
       '</tr>';
   }).join('');
 
+  const renglones = (hs) => hs
+    .map((h) => escapar((h.cantidad || 1) + ' × ' + h.descripcion) +
+      (h.estado ? ' <span style="color:var(--tenue)">(' + escapar(h.estado) + ')</span>' : ''))
+    .join('<br>');
+
+  // Las devoluciones y los cambios viajan juntos en `devoluciones`; los separa `tipo`.
+  const hayCambios = g.devoluciones.some((d) => d.tipo === 'CAMBIO');
   const devoluciones = g.devoluciones.map((d) => {
-    const lista = (d.herramientas || [])
-      .map((h) => escapar((h.cantidad || 1) + ' × ' + h.descripcion))
-      .join('<br>');
-    const marca = d.estado === 'firmado'
-      ? '<span class="etiqueta devolucion">DEVOLUCIÓN</span>'
-      : '<span class="etiqueta esperando">EN LA TABLET</span>';
-    return '<div class="devolucion">' +
+    const esCambio = d.tipo === 'CAMBIO';
+    const hs = d.herramientas || [];
+    const lista = esCambio
+      ? '<div class="sentido"><strong>Devuelve</strong>' +
+          renglones(hs.filter((h) => h.sentido === 'devuelve')) + '</div>' +
+        '<div class="sentido"><strong>Recibe</strong>' +
+          renglones(hs.filter((h) => h.sentido === 'recibe')) + '</div>'
+      : '<div class="lista-herr">' +
+          hs.map((h) => escapar((h.cantidad || 1) + ' × ' + h.descripcion)).join('<br>') + '</div>';
+    const marca = d.estado !== 'firmado'
+      ? '<span class="etiqueta esperando">EN LA TABLET</span>'
+      : esCambio
+        ? '<span class="etiqueta cambio">CAMBIO</span>'
+        : '<span class="etiqueta devolucion">DEVOLUCIÓN</span>';
+    return '<div class="devolucion' + (esCambio ? ' cambio' : '') + '">' +
       '<div class="devolucion-cab">' + marca +
+        (esCambio && d.estado !== 'firmado' ? '<span class="etiqueta cambio">CAMBIO</span>' : '') +
         '<span class="codigo">' + escapar(d.codigo) + '</span>' +
         '<span class="hueco"></span>' +
         '<span class="cuando">' + fecha(d.firmado_en || d.creado_en) + '</span>' +
       '</div>' +
-      '<div class="lista-herr">' + lista + '</div>' +
+      lista +
       (d.estado === 'firmado' ? '<div style="margin-top:12px">' + bloqueFirmas(d) + '</div>' : '') +
       '</div>';
   }).join('');
@@ -759,7 +946,9 @@ function pintarDetalle() {
       ? '<div class="seccion"><h3>Firmas de la recepción</h3>' + bloqueFirmas(e) + '</div>'
       : '') +
 
-    (devoluciones ? '<div class="seccion"><h3>Devoluciones</h3></div>' + devoluciones : '') +
+    (devoluciones
+      ? '<div class="seccion"><h3>' + (hayCambios ? 'Devoluciones y cambios' : 'Devoluciones') + '</h3></div>' + devoluciones
+      : '') +
     bloqueGestion(g) +
     '</div>';
 
@@ -784,7 +973,7 @@ function verLista() {
 }
 
 function pintar() {
-  // Mientras se arma una devolución no se repinta: un aviso del servidor borraría
+  // Mientras se arma una devolución o un cambio no se repinta: un aviso del servidor borraría
   // las casillas marcadas y el estado ya escrito. Es la misma regla que impide
   // repintar un movimiento en curso en la tablet.
   if (gestionando !== null) return;
