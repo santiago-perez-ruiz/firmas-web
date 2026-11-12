@@ -5,13 +5,14 @@ El almacenista arma el movimiento desde su equipo y lo **activa**; la tablet sol
 lo activado y captura la firma. La tablet no tiene ningún campo de texto, así que **el
 teclado nunca aparece**.
 
-## Las tres pantallas
+## Las cuatro pantallas
 
 | Ruta         | Quién la usa | Para qué |
 |--------------|--------------|----------|
-| `/`          | Almacenista (PC) | Arma la ENTREGA y la envía a la tablet |
+| `/`          | Almacenista (PC) | **Recepción rápida por entrega diaria**: arma la recepción con los campos justos y la envía a la tablet |
+| `/detallada` | Almacenista (PC) | **Recepción detallada por herramienta asignada**: el formulario largo (código de empleado, observaciones por herramienta, declaración) |
 | `/firmar`    | Tablet       | Muestra el movimiento activo y captura las dos firmas |
-| `/registros` | Almacenista (PC) | Histórico agrupado por entrega, con las firmas, y descarga a Excel |
+| `/registros` | Almacenista (PC) | Histórico agrupado por entrega, con las firmas, en dos pestañas (*Recepciones rápidas por entrega diaria* / *Recepciones detalladas por herramienta asignada*), y descarga a Excel |
 
 El envío a la tablet es instantáneo (Server-Sent Events); no hay que refrescar nada.
 Solo puede haber **un movimiento activo a la vez**: enviar uno nuevo cancela el anterior.
