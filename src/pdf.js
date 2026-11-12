@@ -1,7 +1,8 @@
 'use strict';
 
 /**
- * Comprobante en PDF de un registro: la recepción y las devoluciones que la cierran.
+ * Comprobante en PDF de un registro: la recepción y las devoluciones y cambios que
+ * la cierran.
  *
  * Es el equivalente de una fila del Excel, pero para una sola transacción y en
  * formato de papel: lo que se archiva o se le entrega al empleado. El Excel sigue
@@ -137,9 +138,17 @@ function construirPdf(grupo, res) {
    * carácter, y salía un apóstrofo. Dibujarlo evita además tener que empotrar una
    * fuente entera por un solo glifo.
    */
-  function marca(devuelta, yy) {
+  function marca(h, yy) {
     doc.save();
-    if (devuelta) {
+    if (h.cerradaPor === 'CAMBIO') {
+      // Salio en un cambio: dos flechas opuestas, una por cada sentido.
+      doc.strokeColor(AZUL).lineWidth(1.1).lineCap('round').lineJoin('round');
+      doc.moveTo(MARGEN, yy + 3).lineTo(MARGEN + 9, yy + 3)
+        .moveTo(MARGEN + 7, yy + 1).lineTo(MARGEN + 9, yy + 3).lineTo(MARGEN + 7, yy + 5)
+        .moveTo(MARGEN + 9, yy + 7.5).lineTo(MARGEN, yy + 7.5)
+        .moveTo(MARGEN + 2, yy + 5.5).lineTo(MARGEN, yy + 7.5).lineTo(MARGEN + 2, yy + 9.5)
+        .stroke();
+    } else if (h.devuelta) {
       doc.strokeColor(VERDE).lineWidth(1.5).lineCap('round').lineJoin('round')
         .moveTo(MARGEN + 1, yy + 5.4).lineTo(MARGEN + 4, yy + 8.4).lineTo(MARGEN + 9, yy + 1.8)
         .stroke();
@@ -152,25 +161,31 @@ function construirPdf(grupo, res) {
   /**
    * Una herramienta: marca, descripción y, a la derecha, si volvió o no. La nota de
    * la entrega detallada baja a su propio renglón: en el mismo cabía media palabra
-   * antes de chocar con la columna de estado, que no se puede estrechar.
+   * antes de chocar con la columna de estado, que no se puede estrechar. Por el
+   * mismo motivo, el "entró en …" de una herramienta incorporada en un cambio va
+   * en ese segundo renglón, delante de la nota.
    */
   function lineaHerramienta(h, yy) {
     const anchoEstado = 155;
-    marca(h.devuelta, yy);
+    marca(h, yy);
 
     doc.font('Helvetica').fontSize(9.5).fillColor(TINTA);
     doc.text(`${h.cantidad || 1} × ${h.descripcion}` + (h.estado ? `  (${h.estado})` : ''),
       MARGEN + 16, yy, { width: util - anchoEstado - 20, lineBreak: false });
 
+    const estado = !h.devuelta ? 'PENDIENTE'
+      : (h.cerradaPor === 'CAMBIO' ? 'cambiada en ' : 'devuelta en ') + h.devueltaEn;
     doc.font('Helvetica').fontSize(8).fillColor(h.devuelta ? TENUE : AMBAR);
-    doc.text(h.devuelta ? 'devuelta en ' + h.devueltaEn : 'PENDIENTE',
+    doc.text(estado,
       MARGEN + util - anchoEstado, yy + 1, { width: anchoEstado, align: 'right', lineBreak: false });
 
     doc.x = MARGEN;
-    if (!h.observaciones) return yy + ALTO_LINEA;
+    const nota = [h.llegoEn ? 'entró en ' + h.llegoEn : '', h.observaciones || '']
+      .filter(Boolean).join('  —  ');
+    if (!nota) return yy + ALTO_LINEA;
 
     doc.font('Helvetica-Oblique').fontSize(8).fillColor(TENUE);
-    doc.text(h.observaciones, MARGEN + 16, yy + ALTO_LINEA - 3,
+    doc.text(nota, MARGEN + 16, yy + ALTO_LINEA - 3,
       { width: util - anchoEstado - 20, lineBreak: false });
     doc.x = MARGEN;
     return yy + ALTO_LINEA + 11;
@@ -224,8 +239,71 @@ function construirPdf(grupo, res) {
     y = parDeFirmas(e, y);
   }
 
-  // ------------------------------------------------------------- devoluciones
+  /**
+   * Un CAMBIO: lo que devuelve y lo que recibe, en dos listas, con su par de firmas.
+   * Como una devolución, no se parte entre dos páginas; `necesario` suma además los
+   * dos rótulos y la nota de cada línea que la lleve.
+   */
+  function cambio(d, yy) {
+    const devuelve = d.herramientas.filter((h) => h.sentido === 'devuelve');
+    const recibe = d.herramientas.filter((h) => h.sentido === 'recibe');
+    const lineas = [
+      ['Devuelve', devuelve, (h) => (h.estado ? `  —  regresa ${h.estado}` : '')],
+      ['Recibe', recibe, (h) => (h.estado ? `  (${h.estado})` : '')],
+    ];
+
+    const conNota = d.herramientas.filter((h) => h.observaciones).length;
+    const necesario = 46 + d.herramientas.length * ALTO_LINEA + conNota * 11 + 2 * 14 +
+      (d.observaciones ? 14 : 0) + ALTO_FIRMA + 40;
+    if (yy + necesario > doc.page.height - MARGEN - 30) {
+      doc.addPage();
+      yy = MARGEN;
+    }
+
+    yy = seccion('Cambio ' + d.codigo, yy);
+    doc.font('Helvetica').fontSize(8.5).fillColor(TENUE);
+    doc.text('Realizado el ' + fecha(d.firmado_en) + (d.responsable ? ' por ' + d.responsable : ''),
+      MARGEN, yy, { width: util, lineBreak: false });
+    doc.x = MARGEN;
+    yy += 16;
+
+    for (const [rotulo, lista, cola] of lineas) {
+      doc.font('Helvetica-Bold').fontSize(8).fillColor(TENUE);
+      doc.text(rotulo.toUpperCase(), MARGEN + 16, yy, { width: util - 16, lineBreak: false, characterSpacing: 0.6 });
+      doc.x = MARGEN;
+      yy += 14;
+      for (const h of lista) {
+        doc.font('Helvetica').fontSize(9.5).fillColor(TINTA);
+        doc.text(`${h.cantidad || 1} × ${h.descripcion}` + cola(h),
+          MARGEN + 16, yy, { width: util - 16, lineBreak: false });
+        doc.x = MARGEN;
+        yy += ALTO_LINEA;
+        if (h.observaciones) {
+          doc.font('Helvetica-Oblique').fontSize(8).fillColor(TENUE);
+          doc.text(h.observaciones, MARGEN + 16, yy - 3, { width: util - 16, lineBreak: false });
+          doc.x = MARGEN;
+          yy += 11;
+        }
+      }
+    }
+
+    if (d.observaciones) {
+      doc.font('Helvetica-Oblique').fontSize(8.5).fillColor(TENUE);
+      doc.text(d.observaciones, MARGEN + 16, yy, { width: util - 16, lineBreak: false });
+      doc.x = MARGEN;
+      yy += 14;
+    }
+
+    return parDeFirmas(d, yy + 6);
+  }
+
+  // ------------------------------------------------------- devoluciones y cambios
   for (const d of grupo.devoluciones.filter((x) => x.estado === 'firmado')) {
+    if (d.tipo === 'CAMBIO') {
+      y = cambio(d, y);
+      continue;
+    }
+
     // Una devolución no debe partirse entre dos páginas.
     const necesario = 46 + d.herramientas.length * ALTO_LINEA + ALTO_FIRMA + 40;
     if (y + necesario > doc.page.height - MARGEN - 30) {

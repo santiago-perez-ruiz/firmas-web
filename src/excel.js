@@ -23,6 +23,20 @@ function lineaHerramienta(h) {
     (h.observaciones ? ` — ${h.observaciones}` : '');
 }
 
+const TIPO_VISIBLE = { ENTREGA: 'RECEPCIÓN', DEVOLUCION: 'DEVOLUCIÓN', CAMBIO: 'CAMBIO' };
+
+/**
+ * La celda "Herramientas" de una fila. En un CAMBIO van las dos mitades por
+ * separado —lo que devuelve y lo que recibe—, porque leidas en una sola lista no se
+ * sabria cual salio y cual entro.
+ */
+function celdaHerramientas(m) {
+  const lista = m.herramientas || [];
+  if (m.tipo !== 'CAMBIO') return lista.map(lineaHerramienta).join('\n');
+  const mitad = (sentido) => lista.filter((h) => h.sentido === sentido).map(lineaHerramienta).join('; ');
+  return `Devuelve: ${mitad('devuelve')}\nRecibe: ${mitad('recibe')}`;
+}
+
 /** Dia y hora por separado: el informe los pone en columnas distintas. */
 function partes(iso) {
   if (!iso) return { dia: '', hora: '' };
@@ -78,7 +92,7 @@ async function construirLibro(movimientos, grupos = []) {
   titulo.protection = { locked: false };
 
   const cabeceras = [
-    'ID Transacción', 'Fecha / Hora', 'Tipo Movimiento', 'Devuelve la Recepción', 'Código Empleado',
+    'ID Transacción', 'Fecha / Hora', 'Tipo Movimiento', 'Recepción asociada','Código Empleado',
     'Nombre del Empleado', 'Cédula / ID', 'Departamento', 'Herramientas', 'Firma Empleado',
     'Almacenista', 'Firma Almacenista',
   ];
@@ -107,15 +121,13 @@ async function construirLibro(movimientos, grupos = []) {
     fila.values = {
       codigo: m.codigo,
       fecha: fecha(m.firmado_en || m.creado_en),
-      tipo: m.tipo === 'DEVOLUCION' ? 'DEVOLUCIÓN' : 'RECEPCIÓN',
+      tipo: TIPO_VISIBLE[m.tipo] || 'RECEPCIÓN',
       cierra: m.entregaCodigo || '',
       codigoEmpleado: m.codigo_empleado || '',
       empleado: m.empleado,
       cedula: m.cedula,
       departamento: m.departamento,
-      herramientas: (m.herramientas || [])
-        .map(lineaHerramienta)
-        .join('\n'),
+      herramientas: celdaHerramientas(m),
       firmaEmpleado: '',
       responsable: m.responsable,
       firmaResponsable: '',
@@ -156,6 +168,12 @@ async function construirLibro(movimientos, grupos = []) {
  *
  * Solo entran las recepciones firmadas: una que sigue esperando en la tablet no ha
  * sacado nada del almacen y contarla como pendiente seria mentir.
+ *
+ * Los CAMBIOS no son una fila aparte: `historial()` ya los dejo dentro del universo
+ * de la recepcion. La herramienta que sale en un cambio cae en "devueltas" como una
+ * devuelta mas, con la fecha del cambio (decision cerrada: sin marca especial), y
+ * la que entra sale a la calle cuando se firmo el cambio, no cuando la recepcion,
+ * asi que su fecha y hora de salida son las de `llegoFecha`.
  */
 function listasDelInforme(grupos) {
   const pendientes = [];
@@ -165,8 +183,9 @@ function listasDelInforme(grupos) {
     const e = g.entrega;
     if (e.estado !== 'firmado') continue;
 
-    const salida = partes(e.firmado_en || e.creado_en);
+    const recepcion = partes(e.firmado_en || e.creado_en);
     for (const h of e.herramientas) {
+      const salida = h.llegoFecha ? partes(h.llegoFecha) : recepcion;
       const linea = lineaHerramienta(h);
       if (h.devuelta) {
         devueltas.push([salida.dia, e.empleado, linea, fecha(h.devueltaFecha)]);
