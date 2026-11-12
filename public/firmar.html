@@ -33,6 +33,11 @@
   #reposo .icono { font-size: 66px; }
   #reposo h2 { margin: 0; font-size: 30px; font-weight: 600; color: #f8fafc; }
   #reposo p { margin: 0; font-size: 17px; color: #94a3b8; max-width: 460px; line-height: 1.6; }
+  /* Aviso en la propia pantalla de espera (nunca un dialogo: modo quiosco). */
+  #reposo .aviso {
+    max-width: 520px; padding: 14px 18px; border-radius: 12px;
+    background: #7f1d1d; color: #fee2e2; font-size: 16px; line-height: 1.5;
+  }
   .conexion {
     position: absolute; bottom: 22px; left: 0; right: 0;
     font-size: 13px; color: #64748b;
@@ -45,6 +50,7 @@
   .cabecera { padding: 14px 24px; color: #fff; display: flex; align-items: center; gap: 16px; flex: none; }
   .cabecera.entrega    { background: #15803d; }
   .cabecera.devolucion { background: #b45309; }
+  .cabecera.cambio     { background: #6d28d9; }
   .cabecera .rotulo { font-size: 12px; letter-spacing: 1.6px; text-transform: uppercase; opacity: .85; }
   .cabecera .nombre { font-size: 23px; font-weight: 700; line-height: 1.2; }
   .cabecera .meta   { margin-left: auto; text-align: right; font-size: 13px; opacity: .9; line-height: 1.5; }
@@ -71,6 +77,9 @@
      condicion: el empleado tiene que poder distinguir de un vistazo el dato del
      almacen de la advertencia que le estan haciendo. */
   .detalle li .nota { display: block; font-size: 12px; font-style: italic; color: var(--tenue); margin-top: 2px; }
+  /* En un CAMBIO van dos listas seguidas; el rotulo de cada una lleva el color de
+     la cabecera para que "Devuelve" y "Recibe" no se lean como una sola lista. */
+  .detalle h3.sentido { color: #6d28d9; }
   .declaracion { font-size: 12.5px; line-height: 1.6; color: var(--tinta-2); font-style: italic; }
 
   .panel { flex: 1; display: flex; flex-direction: column; padding: 18px 24px 22px; min-width: 0; }
@@ -127,6 +136,17 @@
     .detalle { display: none; }
     .cabecera .nombre { font-size: 19px; }
   }
+  /* En vertical, un CAMBIO no puede esconder el detalle: el empleado firma que
+     devuelve unas herramientas y se lleva otras, y tiene que ver cuales. Se apila
+     encima del lienzo (que se reajusta solo por ResizeObserver). Solo para CAMBIO:
+     recepcion y devolucion siguen como estaban. */
+  @media (max-width: 820px) and (orientation: portrait) {
+    #cabecera.cambio ~ .cuerpo { flex-direction: column; }
+    #cabecera.cambio ~ .cuerpo .detalle {
+      display: block; width: auto; max-width: none; min-width: 0; max-height: 32vh;
+      border-right: 0; border-bottom: 1px solid var(--linea);
+    }
+  }
 </style>
 </head>
 <body>
@@ -135,7 +155,8 @@
 <section id="reposo" class="pantalla visible">
   <div class="icono">&#9997;</div>
   <h2>Pantalla de firma</h2>
-  <p>Esperando un movimiento de recepci&oacute;n o devoluci&oacute;n.<br>
+  <div class="aviso oculto" id="avisoReposo"></div>
+  <p>Esperando un movimiento de recepci&oacute;n, devoluci&oacute;n o cambio.<br>
      El almacenista debe enviarlo desde su equipo.</p>
   <div class="conexion" id="conexion">Conectado al servidor</div>
 </section>
@@ -155,8 +176,7 @@
 
   <div class="cuerpo">
     <aside class="detalle">
-      <h3>Herramientas</h3>
-      <ul id="listaHerramientas"></ul>
+      <div id="listaHerramientas"></div>
       <h3>Declaraci&oacute;n</h3>
       <p class="declaracion" id="textoDeclaracion"></p>
     </aside>
@@ -243,48 +263,76 @@ function fechaLegible(iso) {
   return p(d.getDate()) + '/' + p(d.getMonth() + 1) + '/' + d.getFullYear() + '  ' + p(d.getHours()) + ':' + p(d.getMinutes());
 }
 
-function pintarMovimiento(mov) {
-  const esEntrega = mov.tipo === 'ENTREGA';
-  $('#cabecera').className = 'cabecera ' + (esEntrega ? 'entrega' : 'devolucion');
-  $('#rotuloTipo').textContent = esEntrega
-    ? 'RECEPCIÓN DE HERRAMIENTAS'
-    : 'DEVOLUCIÓN DE HERRAMIENTAS' + (mov.entregaCodigo ? ' — ' + mov.entregaCodigo : '');
-  $('#nombreEmpleado').textContent = mov.empleado;
-  $('#metaCodigo').textContent = mov.codigo;
-  // En una devolucion importa ver que entrega se esta cerrando.
-  $('#metaFecha').textContent = mov.entregaCodigo
-    ? 'Cierra ' + mov.entregaCodigo
-    : fechaLegible(mov.creado_en);
-
-  $('#listaHerramientas').innerHTML = mov.herramientas
+// Una lista de solo lectura: cada herramienta con su estado y, si la hay, su nota.
+function listaHtml(herramientas) {
+  return '<ul>' + herramientas
     .map((h) => {
       const est = h.estado ? '<span class="est">Estado: ' + escapar(h.estado) + '</span>' : '';
       // La nota solo la trae la recepcion detallada; en la rapida no hay donde ponerla.
       const nota = h.observaciones ? '<span class="nota">' + escapar(h.observaciones) + '</span>' : '';
-      return '<li><span class="cant">' + (h.cantidad || 1) + '&times;</span>' +
+      return '<li><span class="cant">' + escapar(h.cantidad || 1) + '&times;</span>' +
         escapar(h.descripcion) + est + nota + '</li>';
     })
-    .join('');
+    .join('') + '</ul>';
+}
+
+function pintarMovimiento(mov) {
+  const esEntrega = mov.tipo === 'ENTREGA';
+  const esCambio = mov.tipo === 'CAMBIO';
+  const sufijo = mov.entregaCodigo ? ' — ' + mov.entregaCodigo : '';
+  $('#cabecera').className = 'cabecera ' + (esEntrega ? 'entrega' : esCambio ? 'cambio' : 'devolucion');
+  $('#rotuloTipo').textContent = esEntrega
+    ? 'RECEPCIÓN DE HERRAMIENTAS'
+    : esCambio
+      ? 'CAMBIO DE HERRAMIENTA' + sufijo
+      : 'DEVOLUCIÓN DE HERRAMIENTAS' + sufijo;
+  $('#nombreEmpleado').textContent = mov.empleado;
+  $('#metaCodigo').textContent = mov.codigo;
+  // En una devolucion importa ver que entrega se esta cerrando. Un cambio no la
+  // cierra (el empleado se lleva otra herramienta), solo cuelga de ella.
+  $('#metaFecha').textContent = mov.entregaCodigo
+    ? (esCambio ? 'Sobre ' : 'Cierra ') + mov.entregaCodigo
+    : fechaLegible(mov.creado_en);
+
+  // En un CAMBIO cada linea dice su `sentido`: lo que regresa al almacen y lo que se
+  // lleva en su lugar van en dos listas, para que el empleado vea las dos mitades.
+  if (esCambio) {
+    const devuelve = mov.herramientas.filter((h) => h.sentido === 'devuelve');
+    const recibe = mov.herramientas.filter((h) => h.sentido === 'recibe');
+    $('#listaHerramientas').innerHTML =
+      '<h3 class="sentido">Devuelve</h3>' + listaHtml(devuelve) +
+      '<h3 class="sentido">Recibe</h3>' + listaHtml(recibe);
+  } else {
+    $('#listaHerramientas').innerHTML = '<h3>Herramientas</h3>' + listaHtml(mov.herramientas);
+  }
 
   // El texto llega ya resuelto del servidor: la entrega detallada deja cambiarlo y
   // la tablet no puede tener una copia propia que lo contradiga.
   $('#textoDeclaracion').textContent = mov.declaracion || '';
 
   // Mostrar antes de preparar el lienzo: oculto mide 0 y no se puede escalar bien.
+  ocultarAvisoReposo();
   mostrar('firma');
   irAPaso(1);
 }
 
+const PAPELES = {
+  ENTREGA:    { empleado: 'quien recibe',            almacenista: 'quien entrega' },
+  DEVOLUCION: { empleado: 'quien devuelve',          almacenista: 'quien recibe' },
+  CAMBIO:     { empleado: 'quien devuelve y recibe', almacenista: 'quien recibe y entrega' },
+};
+
 function irAPaso(n) {
   paso = n;
-  const esEntrega = movimiento.tipo === 'ENTREGA';
+  // Aqui no se nombra el movimiento sino lo que hace cada firmante (ver CLAUDE.md).
+  const papeles = PAPELES[movimiento.tipo] || PAPELES.DEVOLUCION;
   $('#numPaso').textContent = n;
   if (n === 1) {
     $('#tituloPaso').textContent = 'Firma del empleado';
-    $('#subtituloPaso').textContent = movimiento.empleado + (esEntrega ? ' — quien recibe' : ' — quien devuelve');
+    $('#subtituloPaso').textContent = movimiento.empleado + ' — ' + papeles.empleado;
   } else {
     $('#tituloPaso').textContent = 'Firma del almacenista';
-    $('#subtituloPaso').textContent = (movimiento.responsable || 'Responsable de almacén') + (esEntrega ? ' — quien entrega' : ' — quien recibe');
+    $('#subtituloPaso').textContent = (movimiento.responsable || 'Responsable de almacén') + ' — ' + papeles.almacenista;
   }
   reiniciarLienzo();
 }
@@ -301,17 +349,30 @@ $('#btnConfirmar').addEventListener('click', async () => {
   }
 
   $('#btnConfirmar').disabled = true;
+  const enCurso = movimiento;
   try {
-    const r = await fetch('/api/movimientos/' + movimiento.id + '/firmar', {
+    const r = await fetch('/api/movimientos/' + enCurso.id + '/firmar', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ firmaEmpleado: firmaEmpleado, firmaResponsable: png }),
     });
     if (!r.ok) {
-      const e = await r.json();
+      const e = await r.json().catch(() => ({}));
+      // El almacenista cancelo el movimiento o envio otro mientras se firmaba (por el
+      // tunel la tablet se entera con segundos de retraso). Reintentar no sirve: se
+      // avisa en la pantalla de espera y se vuelve a ella.
+      if (r.status === 400 && e.error === MOVIMIENTO_INACTIVO) {
+        movimientoYaNoActivo(enCurso);
+        return;
+      }
       throw new Error(e.error || 'Error al guardar');
     }
-    $('#textoListo').textContent = movimiento.codigo + ' — ' + movimiento.empleado;
+    // `enCurso` y no `movimiento`: el aviso "tablet libre" del servidor suele llegar
+    // antes que esta respuesta y ya lo dejo en null.
+    // Si entre ese aviso y esta respuesta ya llego y se pinto otro movimiento, ese
+    // manda: el acuse no lo tapa (misma guarda que en movimientoYaNoActivo).
+    if (movimiento && movimiento.id !== enCurso.id) return;
+    $('#textoListo').textContent = enCurso.codigo + ' — ' + enCurso.empleado;
     mostrar('listo');
     firmaEmpleado = null;
     movimiento = null;
@@ -324,6 +385,36 @@ $('#btnConfirmar').addEventListener('click', async () => {
     $('#btnConfirmar').disabled = false;
   }
 });
+
+// ---------------------------------------------------------------- ya no activo
+// Texto exacto con el que responde el servidor (`firmar()` en src/db.js).
+const MOVIMIENTO_INACTIVO = 'Este movimiento ya no está activo';
+
+let temporizadorAviso = null;
+function ocultarAvisoReposo() {
+  clearTimeout(temporizadorAviso);
+  $('#avisoReposo').classList.add('oculto');
+}
+
+function movimientoYaNoActivo(mov) {
+  // Si mientras se esperaba la respuesta ya llego y se pinto otro movimiento, ese
+  // manda: no se le borra la pantalla por el rechazo del anterior.
+  if (movimiento && movimiento.id !== mov.id) return;
+  const aviso = $('#avisoReposo');
+  aviso.textContent = 'La firma no se guardó: el movimiento ' + mov.codigo +
+    ' fue cancelado o reemplazado desde el almacén. Si hace falta, el almacenista debe enviarlo de nuevo.';
+  aviso.classList.remove('oculto');
+  clearTimeout(temporizadorAviso);
+  temporizadorAviso = setTimeout(() => aviso.classList.add('oculto'), 15000);
+
+  $('#errorFirma').classList.add('oculto');
+  movimiento = null;
+  firmaEmpleado = null;
+  mostrar('reposo');
+  // Si ya hay otro movimiento esperando, que aparezca sin aguardar al siguiente aviso.
+  canal.olvidar();
+  canal.consultar();
+}
 
 // ---------------------------------------------------------------- servidor
 function recibir(mov) {
