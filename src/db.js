@@ -100,6 +100,7 @@ const PREFIJO = { rapida: 'TRX', detallada: 'TRXD' };
 const DECLARACIONES = {
   ENTREGA: 'Declaro haber recibido las herramientas relacionadas en el estado de conservación indicado y me comprometo a su uso adecuado, cuidado y devolución oportuna.',
   DEVOLUCION: 'Declaro haber devuelto las herramientas relacionadas en el estado de conservación indicado.',
+  CAMBIO: 'Declaro haber devuelto las herramientas indicadas y recibido en su reemplazo las relacionadas, en el estado de conservación indicado.',
 };
 
 function ahora() {
@@ -146,18 +147,57 @@ function codigoDe(id) {
 }
 
 /**
- * Herramientas de una entrega que todavia no han vuelto.
+ * Lo que una recepcion tiene a cargo del empleado, calculado a partir de los
+ * movimientos firmados que la referencian.
  *
- * No se guarda un campo "devuelta" en la entrega: se calcula a partir de las
- * devoluciones firmadas que la referencian. Asi no hay dos versiones de la verdad
- * que se puedan desincronizar, y las devoluciones parciales salen solas.
+ * - universo: las herramientas de la recepcion mas las que entraron en CAMBIOS
+ *   firmados (lineas `sentido: 'recibe'`), en ese orden.
+ * - cerradaPor: id de herramienta -> movimiento que la cerro. La cierran las
+ *   DEVOLUCIONES firmadas (todas sus lineas) y los CAMBIOS firmados (sus lineas
+ *   `sentido: 'devuelve'`).
+ * - llegoPor: id -> CAMBIO que la incorporo, solo para las que no venian en la
+ *   recepcion.
+ *
+ * No se guarda un campo "devuelta" en ninguna parte: un CAMBIO es un movimiento mas
+ * que referencia la recepcion, y lo que sigue fuera sale de cruzar los firmados. Un
+ * cambio cancelado antes de firmarse ni cierra ni incorpora nada sin tocar ninguna
+ * fila, que es justo lo que una columna "devuelta" no sabria hacer.
+ *
+ * `movimientos` debe traer solo los firmados, en orden de id.
  */
-function pendientesDe(entrega, devoluciones) {
-  const devueltas = new Set();
-  for (const d of devoluciones) {
-    for (const h of d.herramientas) devueltas.add(h.id);
+function cuentaDe(entrega, movimientos) {
+  const universo = [...entrega.herramientas];
+  const cerradaPor = new Map();
+  const llegoPor = new Map();
+  for (const m of movimientos) {
+    for (const h of m.herramientas) {
+      if (m.tipo === 'CAMBIO' && h.sentido === 'recibe') {
+        universo.push(h);
+        llegoPor.set(h.id, m);
+      } else if (m.tipo === 'DEVOLUCION' || (m.tipo === 'CAMBIO' && h.sentido === 'devuelve')) {
+        cerradaPor.set(h.id, m);
+      }
+    }
   }
-  return entrega.herramientas.filter((h) => !devueltas.has(h.id));
+  return { universo, cerradaPor, llegoPor };
+}
+
+/** Herramientas de una entrega que todavia no han vuelto (ver `cuentaDe`). */
+function pendientesDe(entrega, movimientos) {
+  const { universo, cerradaPor } = cuentaDe(entrega, movimientos);
+  return universo.filter((h) => !cerradaPor.has(h.id));
+}
+
+/** DEVOLUCIONES y CAMBIOS firmados de una recepcion, en orden. */
+function atadosFirmados(entregaId) {
+  return db
+    .prepare(
+      `SELECT * FROM movimientos
+        WHERE tipo IN ('DEVOLUCION', 'CAMBIO') AND estado = 'firmado' AND entrega_id = ?
+        ORDER BY id`
+    )
+    .all(entregaId)
+    .map(normalizar);
 }
 
 /** Entregas firmadas a las que les falta devolver al menos una herramienta. */
@@ -168,8 +208,13 @@ function entregasPendientes() {
     .map(normalizar);
   if (entregas.length === 0) return [];
 
+  // Devoluciones y cambios firmados: los dos mueven lo que sigue fuera.
   const devoluciones = db
-    .prepare(`SELECT * FROM movimientos WHERE tipo = 'DEVOLUCION' AND estado = 'firmado' AND entrega_id IS NOT NULL`)
+    .prepare(
+      `SELECT * FROM movimientos
+        WHERE tipo IN ('DEVOLUCION', 'CAMBIO') AND estado = 'firmado' AND entrega_id IS NOT NULL
+        ORDER BY id`
+    )
     .all()
     .map(normalizar);
 
@@ -185,14 +230,26 @@ function entregasPendientes() {
 }
 
 /**
- * El historico agrupado: cada entrega con las devoluciones que la cierran.
+ * El historico agrupado: cada entrega con las devoluciones y cambios que la cierran.
  *
  * Se arma al vuelo, como pendientesDe. Guardar el vinculo ya resuelto en una
  * columna seria la misma trampa que un campo "devuelta": dos versiones de la
  * verdad que se separan en cuanto una devolucion se cancela antes de firmarse.
  *
- * Cada herramienta de la entrega sale marcada con la devolucion que la cerro, de
- * modo que la pantalla no tiene que cruzar nada por su cuenta.
+ * Forma de cada grupo:
+ * - `entrega.herramientas` es el universo de `cuentaDe`: las de la recepcion y,
+ *   detras, las que entraron en cambios firmados. Cada una lleva `llegoEn` /
+ *   `llegoFecha` (codigo y fecha de firma del CAMBIO que la trajo; null si venia en
+ *   la recepcion) y `devuelta`, `devueltaEn`, `devueltaFecha` y
+ *   `cerradaPor: 'DEVOLUCION' | 'CAMBIO'` (null mientras sigue fuera).
+ * - `devoluciones` lleva, en orden de id, las DEVOLUCIONES **y los CAMBIOS** no
+ *   cancelados de la recepcion; se distinguen por `tipo`, y en un CAMBIO cada linea
+ *   dice su `sentido` ('devuelve' | 'recibe'). Van juntos porque los dos son lo que
+ *   paso despues de la recepcion, en el mismo hilo.
+ * - `pendientes` y `ciclo` se calculan sobre el universo.
+ *
+ * Cada herramienta sale marcada con el movimiento que la cerro, de modo que la
+ * pantalla no tiene que cruzar nada por su cuenta.
  */
 function historial(limite = 200) {
   const entregas = db
@@ -201,7 +258,7 @@ function historial(limite = 200) {
     .map(normalizar);
 
   const devoluciones = db
-    .prepare(`SELECT * FROM movimientos WHERE tipo = 'DEVOLUCION' AND estado <> 'cancelado' ORDER BY id`)
+    .prepare(`SELECT * FROM movimientos WHERE tipo IN ('DEVOLUCION', 'CAMBIO') AND estado <> 'cancelado' ORDER BY id`)
     .all()
     .map(normalizar);
 
@@ -218,22 +275,22 @@ function historial(limite = 200) {
 
   const grupos = entregas.map((e) => {
     const suyas = porEntrega.get(e.id) || [];
-    // Solo las firmadas cierran herramientas: una devolucion todavia en la tablet
-    // no ha devuelto nada aunque ya este creada.
+    // Solo los firmados cierran o incorporan herramientas: un movimiento todavia en
+    // la tablet no ha devuelto ni entregado nada aunque ya este creado.
     const firmadas = suyas.filter((d) => d.estado === 'firmado');
+    const { universo, cerradaPor, llegoPor } = cuentaDe(e, firmadas);
 
-    const cerradaPor = new Map();
-    for (const d of firmadas) {
-      for (const h of d.herramientas) cerradaPor.set(h.id, d);
-    }
-
-    const herramientas = e.herramientas.map((h) => {
+    const herramientas = universo.map((h) => {
       const d = cerradaPor.get(h.id);
+      const c = llegoPor.get(h.id);
       return {
         ...h,
         devuelta: !!d,
         devueltaEn: d ? d.codigo : null,
         devueltaFecha: d ? d.firmado_en : null,
+        cerradaPor: d ? d.tipo : null,
+        llegoEn: c ? c.codigo : null,
+        llegoFecha: c ? c.firmado_en : null,
       };
     });
 
@@ -256,9 +313,10 @@ function historial(limite = 200) {
  * Prepara un movimiento antes de guardarlo.
  *
  * En una ENTREGA se numeran las herramientas: ese id es lo que despues permite saber
- * cual volvio y cual no. En una DEVOLUCION se comprueba que lo que se devuelve
- * pertenece de verdad a la entrega y sigue pendiente, para que no se pueda cerrar dos
- * veces la misma herramienta ni devolver algo que nunca se entrego.
+ * cual volvio y cual no. En una DEVOLUCION (y en lo que sale de un CAMBIO) se
+ * comprueba que lo que se devuelve pertenece de verdad a la entrega y sigue
+ * pendiente, para que no se pueda cerrar dos veces la misma herramienta ni devolver
+ * algo que nunca se entrego.
  */
 function prepararMovimiento(d) {
   if (d.tipo === 'ENTREGA') {
@@ -284,19 +342,30 @@ function prepararMovimiento(d) {
     };
   }
 
-  // DEVOLUCION
+  // DEVOLUCION y CAMBIO: los dos cuelgan de una recepcion firmada.
   const entrega = obtener(Number(d.entregaId));
   if (!entrega) throw new Error('Seleccione la recepción que se está devolviendo');
   if (entrega.tipo !== 'ENTREGA' || entrega.estado !== 'firmado') {
     throw new Error('El movimiento indicado no es una recepción firmada');
   }
 
-  const devoluciones = db
-    .prepare(`SELECT * FROM movimientos WHERE tipo = 'DEVOLUCION' AND estado = 'firmado' AND entrega_id = ?`)
-    .all(entrega.id)
-    .map(normalizar);
-  const pendientes = pendientesDe(entrega, devoluciones);
+  const pendientes = pendientesDe(entrega, atadosFirmados(entrega.id));
   const porId = new Map(pendientes.map((h) => [h.id, h]));
+
+  // Los datos del empleado salen de la entrega: no se reescriben a mano. El `modo`
+  // tambien, y por eso una devolucion o un cambio aparecen siempre en la misma lista
+  // que la recepcion que cierran: separarlos dejaria media pareja en cada pestana.
+  const heredado = {
+    modo: entrega.modo || 'rapida',
+    empleado: entrega.empleado,
+    cedula: entrega.cedula,
+    departamento: entrega.departamento,
+    codigoEmpleado: entrega.codigo_empleado || '',
+    declaracion: '',
+    entregaId: entrega.id,
+  };
+
+  if (d.tipo === 'CAMBIO') return prepararCambio(d, entrega, porId, heredado);
 
   const herramientas = (d.herramientas || []).map((h) => {
     const original = porId.get(Number(h.id));
@@ -313,20 +382,71 @@ function prepararMovimiento(d) {
   });
   if (herramientas.length === 0) throw new Error('Marque al menos una herramienta a devolver');
 
-  // Los datos del empleado salen de la entrega: no se reescriben a mano. El `modo`
-  // tambien, y por eso una devolucion aparece siempre en la misma lista que la
-  // recepcion que cierra: separarlas dejaria media pareja en cada pestana.
-  return {
-    ...d,
-    modo: entrega.modo || 'rapida',
-    empleado: entrega.empleado,
-    cedula: entrega.cedula,
-    departamento: entrega.departamento,
-    codigoEmpleado: entrega.codigo_empleado || '',
-    declaracion: '',
-    herramientas,
-    entregaId: entrega.id,
-  };
+  return { ...d, ...heredado, herramientas };
+}
+
+/**
+ * Un CAMBIO: en una sola firma el empleado devuelve herramientas pendientes de la
+ * recepcion y se lleva otras en su lugar.
+ *
+ * Cada linea dice su `sentido`. Las que `devuelve` deben estar pendientes, igual que
+ * en una devolucion. Las que `recibe` se escriben a mano —descripcion, cantidad,
+ * estado y observaciones— y no heredan nada de la que sale: el taladro nuevo no tiene
+ * por que parecerse al viejo. Reciben un id nuevo a continuacion del mayor del grupo
+ * (la recepcion y sus cambios no cancelados), para que despues se puedan devolver o
+ * cambiar a su vez por ese id.
+ */
+function prepararCambio(d, entrega, porId, heredado) {
+  const salen = [];
+  const entran = [];
+  const vistas = new Set();
+
+  for (const h of d.herramientas || []) {
+    if (h && h.sentido === 'devuelve') {
+      const original = porId.get(Number(h.id));
+      if (!original || vistas.has(original.id)) {
+        throw new Error(`La herramienta "${h.descripcion || h.id}" no está pendiente en ${entrega.codigo}`);
+      }
+      vistas.add(original.id);
+      salen.push({
+        id: original.id,
+        sentido: 'devuelve',
+        descripcion: original.descripcion,
+        cantidad: original.cantidad,
+        estado: h.estado || original.estado,     // condicion con la que regresa
+        observaciones: String(h.observaciones || '').trim(),
+      });
+    } else if (h && h.sentido === 'recibe') {
+      const descripcion = String(h.descripcion || '').trim();
+      if (!descripcion) throw new Error('Cada herramienta que se recibe necesita una descripción');
+      entran.push({
+        sentido: 'recibe',
+        descripcion,
+        cantidad: String(h.cantidad || '1'),
+        estado: h.estado || '',
+        observaciones: String(h.observaciones || '').trim(),
+      });
+    } else {
+      throw new Error('Cada herramienta de un cambio debe indicar si se devuelve o se recibe');
+    }
+  }
+  if (salen.length === 0) throw new Error('Marque al menos una herramienta que se devuelve');
+  if (entran.length === 0) throw new Error('Agregue al menos una herramienta que se recibe');
+
+  // Mayor id del grupo: la recepcion y los cambios que no se cancelaron. Cuenta
+  // tambien el que pudiera estar esperando firma; crear este lo cancela y su numero
+  // queda sin usar, un hueco inofensivo frente a repetir un id.
+  const cambios = db
+    .prepare(`SELECT herramientas FROM movimientos WHERE tipo = 'CAMBIO' AND estado <> 'cancelado' AND entrega_id = ?`)
+    .all(entrega.id)
+    .map((f) => JSON.parse(f.herramientas || '[]'));
+  let maximo = 0;
+  for (const h of [entrega.herramientas, ...cambios].flat()) {
+    if (Number(h.id) > maximo) maximo = Number(h.id);
+  }
+  entran.forEach((h, i) => { h.id = maximo + i + 1; });
+
+  return { ...d, ...heredado, herramientas: [...salen, ...entran] };
 }
 
 /** Crea el movimiento y lo deja en pantalla de la tablet. Solo puede haber uno esperando. */
