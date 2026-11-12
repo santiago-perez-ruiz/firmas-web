@@ -80,12 +80,15 @@ app.post(
   '/api/movimientos',
   manejar((req, res) => {
     const { tipo } = req.body || {};
-    if (tipo !== 'ENTREGA' && tipo !== 'DEVOLUCION') throw new Error('Tipo debe ser ENTREGA o DEVOLUCION');
+    if (!['ENTREGA', 'DEVOLUCION', 'CAMBIO'].includes(tipo)) {
+      throw new Error('Tipo debe ser ENTREGA, DEVOLUCION o CAMBIO');
+    }
 
     let herramientas = req.body.herramientas || [];
+    if (!Array.isArray(herramientas)) throw new Error('La lista de herramientas no es válida');
     if (tipo === 'ENTREGA') {
-      // En una entrega los datos se escriben a mano; en una devolucion salen de la
-      // entrega elegida, y de validarlos se encarga la capa de datos.
+      // En una entrega los datos se escriben a mano; en una devolucion o un cambio
+      // salen de la entrega elegida, y de validarlos se encarga la capa de datos.
       if (!req.body.empleado || !String(req.body.empleado).trim()) {
         throw new Error('Falta el nombre del empleado');
       }
