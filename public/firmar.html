@@ -136,6 +136,17 @@
     .detalle { display: none; }
     .cabecera .nombre { font-size: 19px; }
   }
+  /* En vertical, un CAMBIO no puede esconder el detalle: el empleado firma que
+     devuelve unas herramientas y se lleva otras, y tiene que ver cuales. Se apila
+     encima del lienzo (que se reajusta solo por ResizeObserver). Solo para CAMBIO:
+     recepcion y devolucion siguen como estaban. */
+  @media (max-width: 820px) and (orientation: portrait) {
+    #cabecera.cambio ~ .cuerpo { flex-direction: column; }
+    #cabecera.cambio ~ .cuerpo .detalle {
+      display: block; width: auto; max-width: none; min-width: 0; max-height: 32vh;
+      border-right: 0; border-bottom: 1px solid var(--linea);
+    }
+  }
 </style>
 </head>
 <body>
@@ -358,6 +369,9 @@ $('#btnConfirmar').addEventListener('click', async () => {
     }
     // `enCurso` y no `movimiento`: el aviso "tablet libre" del servidor suele llegar
     // antes que esta respuesta y ya lo dejo en null.
+    // Si entre ese aviso y esta respuesta ya llego y se pinto otro movimiento, ese
+    // manda: el acuse no lo tapa (misma guarda que en movimientoYaNoActivo).
+    if (movimiento && movimiento.id !== enCurso.id) return;
     $('#textoListo').textContent = enCurso.codigo + ' — ' + enCurso.empleado;
     mostrar('listo');
     firmaEmpleado = null;
