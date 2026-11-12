@@ -9,7 +9,9 @@
   .envoltura { max-width: 1000px; }
 
   .encabezado-tabla { display: flex; align-items: center; gap: 16px; margin-bottom: 18px; }
-  .contador { font-size: 14px; color: var(--tenue); }
+  .contador { font-size: 14px; color: var(--tenue); white-space: nowrap; }
+  /* El título de la lista es largo: que se parta él y no el botón ni el contador. */
+  .encabezado-tabla .boton { white-space: nowrap; }
   .vacio { padding: 48px 20px; text-align: center; color: var(--tenue); }
 
   /* Las dos listas. Pestanas y no un desplegable: son dos y se alternan a menudo,
@@ -217,8 +219,8 @@
 <div class="barra">
   <h1>Control de Herramientas</h1>
   <span class="sep"></span>
-  <a href="/">Recepci&oacute;n r&aacute;pida</a>
-  <a href="/detallada">Recepci&oacute;n detallada</a>
+  <a href="/">Recepci&oacute;n r&aacute;pida por entrega diaria</a>
+  <a href="/detallada">Recepci&oacute;n detallada por herramienta asignada</a>
   <a href="/registros" class="activo">Registros</a>
   <a href="/firmar" target="_blank">Pantalla de firma &#8599;</a>
 </div>
@@ -236,8 +238,8 @@
   </div>
   <div id="pendientes"></div>
   <div class="pestanas oculto" id="pestanas">
-    <button type="button" data-modo="rapida">Recepciones r&aacute;pidas <span class="cuenta" id="cuentaRapida">0</span></button>
-    <button type="button" data-modo="detallada">Recepciones detalladas <span class="cuenta" id="cuentaDetallada">0</span></button>
+    <button type="button" data-modo="rapida">Recepciones r&aacute;pidas por entrega diaria <span class="cuenta" id="cuentaRapida">0</span></button>
+    <button type="button" data-modo="detallada">Recepciones detalladas por herramienta asignada <span class="cuenta" id="cuentaDetallada">0</span></button>
   </div>
   <div id="panel"></div>
 </div>
@@ -618,8 +620,8 @@ function pintarLista() {
   const sueltas = modoLista === 'rapida' ? (ultimoHistorial.sueltas || []) : [];
 
   $('#titulo').textContent = modoLista === 'detallada'
-    ? 'Recepciones detalladas'
-    : 'Recepciones rápidas';
+    ? 'Recepciones detalladas por herramienta asignada'
+    : 'Recepciones rápidas por entrega diaria';
   $('#btnVolver').classList.add('oculto');
   $('#btnExcel').classList.remove('oculto');
   $('#btnPdf').classList.add('oculto');
@@ -631,7 +633,7 @@ function pintarLista() {
   if (!grupos.length && !sueltas.length) {
     $('#panel').innerHTML = '<div class="tarjeta"><div class="vacio">' +
       (modoLista === 'detallada'
-        ? 'Todavía no hay recepciones detalladas firmadas.'
+        ? 'Todavía no hay recepciones detalladas por herramienta asignada firmadas.'
         : 'Todavía no hay movimientos firmados.') +
       '</div></div>';
     return;
