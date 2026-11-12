@@ -16,7 +16,7 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS movimientos (
     id                 INTEGER PRIMARY KEY AUTOINCREMENT,
     codigo             TEXT    NOT NULL,
-    tipo               TEXT    NOT NULL,              -- ENTREGA | DEVOLUCION
+    tipo               TEXT    NOT NULL,              -- ENTREGA | DEVOLUCION | CAMBIO
     empleado           TEXT    NOT NULL,
     cedula             TEXT    NOT NULL DEFAULT '',
     departamento       TEXT    NOT NULL DEFAULT '',
@@ -28,7 +28,7 @@ db.exec(`
     firma_responsable  TEXT,
     creado_en          TEXT    NOT NULL,
     firmado_en         TEXT,
-    entrega_id         INTEGER REFERENCES movimientos(id), -- solo en DEVOLUCION
+    entrega_id         INTEGER REFERENCES movimientos(id), -- en DEVOLUCION y CAMBIO
     codigo_empleado    TEXT    NOT NULL DEFAULT '',        -- ficha del empleado (EMP-042)
     declaracion        TEXT    NOT NULL DEFAULT '',        -- texto que firma; vacio = el de siempre
     modo               TEXT    NOT NULL DEFAULT 'rapida'   -- rapida | detallada, la pantalla que lo armo
@@ -319,6 +319,9 @@ function historial(limite = 200) {
  * algo que nunca se entrego.
  */
 function prepararMovimiento(d) {
+  if (d.herramientas != null && !Array.isArray(d.herramientas)) {
+    throw new Error('La lista de herramientas no es válida');
+  }
   if (d.tipo === 'ENTREGA') {
     const herramientas = (d.herramientas || []).map((h, i) => ({
       id: i + 1,
@@ -433,11 +436,12 @@ function prepararCambio(d, entrega, porId, heredado) {
   if (salen.length === 0) throw new Error('Marque al menos una herramienta que se devuelve');
   if (entran.length === 0) throw new Error('Agregue al menos una herramienta que se recibe');
 
-  // Mayor id del grupo: la recepcion y los cambios que no se cancelaron. Cuenta
-  // tambien el que pudiera estar esperando firma; crear este lo cancela y su numero
-  // queda sin usar, un hueco inofensivo frente a repetir un id.
+  // Mayor id del grupo: la recepcion y todos sus cambios, tambien los cancelados y
+  // el que pudiera estar esperando firma. Un id que no llego a usarse queda como
+  // hueco, inofensivo; reutilizarlo dejaria dos herramientas con el mismo id si
+  // aquel cambio llegara a firmarse por cualquier camino.
   const cambios = db
-    .prepare(`SELECT herramientas FROM movimientos WHERE tipo = 'CAMBIO' AND estado <> 'cancelado' AND entrega_id = ?`)
+    .prepare(`SELECT herramientas FROM movimientos WHERE tipo = 'CAMBIO' AND entrega_id = ?`)
     .all(entrega.id)
     .map((f) => JSON.parse(f.herramientas || '[]'));
   let maximo = 0;
@@ -510,15 +514,22 @@ function firmar(id, firmaEmpleado, firmaResponsable) {
   const mov = obtener(id);
   if (!mov) throw new Error('Movimiento no encontrado');
   if (mov.estado === 'firmado') throw new Error('Este movimiento ya fue firmado');
+  // Solo se firma el que esta activo. Una tablet atrasada (por el tunel tarda segundos
+  // en enterarse de una cancelacion) podria firmar uno cancelado y resucitarlo: una
+  // devolucion cerraria otra vez lo ya cerrado, o un cambio duplicaria herramientas.
+  if (mov.estado !== 'esperando') throw new Error('Este movimiento ya no está activo');
 
   const archivoEmpleado = guardarFirma(id, 'empleado', firmaEmpleado);
   const archivoResponsable = firmaResponsable ? guardarFirma(id, 'responsable', firmaResponsable) : null;
 
-  db.prepare(
+  // El `AND estado = 'esperando'` cubre una cancelacion que llegue entre la lectura
+  // de arriba y esta escritura.
+  const info = db.prepare(
     `UPDATE movimientos
         SET firma_empleado = ?, firma_responsable = ?, estado = 'firmado', firmado_en = ?
-      WHERE id = ?`
+      WHERE id = ? AND estado = 'esperando'`
   ).run(archivoEmpleado, archivoResponsable, ahora(), id);
+  if (info.changes === 0) throw new Error('Este movimiento ya no está activo');
 
   return obtener(id);
 }

@@ -85,6 +85,7 @@ app.post(
     }
 
     let herramientas = req.body.herramientas || [];
+    if (!Array.isArray(herramientas)) throw new Error('La lista de herramientas no es válida');
     if (tipo === 'ENTREGA') {
       // En una entrega los datos se escriben a mano; en una devolucion o un cambio
       // salen de la entrega elegida, y de validarlos se encarga la capa de datos.
