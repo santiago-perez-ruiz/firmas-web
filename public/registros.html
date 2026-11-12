@@ -630,6 +630,13 @@ function ponerModoGestion(modo) {
   if (!caja) return;
   gestionModo = modo === 'cambio' ? 'cambio' : 'devolucion';
   const cambio = gestionModo === 'cambio';
+  // La primera vez que se pasa a Cambio se desmarca todo: la lista viene marcada
+  // entera para la devolución, y cambiar todo por descuido es caro de deshacer.
+  // Solo la primera vez, para no borrar lo que se marque después al ir y volver.
+  if (cambio && !caja.dataset.cambioVisto) {
+    caja.dataset.cambioVisto = '1';
+    caja.querySelectorAll('#listaDevolver .marca').forEach((c) => { c.checked = false; });
+  }
   caja.classList.toggle('en-cambio', cambio);
   caja.querySelectorAll('[data-gmodo]').forEach((b) => {
     b.classList.toggle('activa', b.dataset.gmodo === gestionModo);
@@ -713,22 +720,35 @@ function enviarCambio() {
   }
 
   // Un renglón del todo en blanco no cuenta (el "+ otra" de más). Uno con algo
-  // escrito pero sin descripción sí es un error: la tablet no sabría qué se lleva.
-  const filas = Array.from($('#listaRecibe').querySelectorAll('.recibe-fila')).map((f) => ({
-    descripcion: f.querySelector('.rc-desc').value.trim(),
-    cantidad: f.querySelector('.rc-cant').value.trim() || '1',
-    estado: f.querySelector('.rc-estado').value,
-    observaciones: f.querySelector('.rc-obs').value.trim(),
-  }));
-  if (filas.some((h) => !h.descripcion && h.observaciones)) {
+  // escrito o cambiado (cantidad, estado u observaciones) pero sin descripción sí es
+  // un error: la tablet no sabría qué se lleva, e ignorarlo lo perdería en silencio.
+  const filas = Array.from($('#listaRecibe').querySelectorAll('.recibe-fila')).map((f) => {
+    const cantidad = f.querySelector('.rc-cant').value.trim();
+    const estado = f.querySelector('.rc-estado');
+    const observaciones = f.querySelector('.rc-obs').value.trim();
+    return {
+      descripcion: f.querySelector('.rc-desc').value.trim(),
+      cantidad: cantidad || '1',
+      estado: estado.value,
+      observaciones,
+      tocada: !!observaciones || (cantidad !== '' && cantidad !== '1') || estado.selectedIndex !== 0,
+    };
+  });
+  if (filas.some((h) => !h.descripcion && h.tocada)) {
     return avisar('Cada herramienta que recibe necesita una descripción.', 'error');
   }
-  const entran = filas.filter((h) => h.descripcion).map((h) => ({ ...h, sentido: 'recibe' }));
+  const entran = filas.filter((h) => h.descripcion).map((h) => ({
+    descripcion: h.descripcion,
+    cantidad: h.cantidad,
+    estado: h.estado,
+    observaciones: h.observaciones,
+    sentido: 'recibe',
+  }));
   if (!entran.length) {
     return avisar('Escriba al menos una herramienta que recibe, con su descripción.', 'error');
   }
-  if (entran.some((h) => !(Number(h.cantidad) >= 1))) {
-    return avisar('La cantidad de cada herramienta que recibe debe ser 1 o más.', 'error');
+  if (entran.some((h) => !Number.isInteger(Number(h.cantidad)) || Number(h.cantidad) < 1)) {
+    return avisar('La cantidad de cada herramienta que recibe debe ser un número entero, 1 o más.', 'error');
   }
 
   enviarGestion('CAMBIO', salen.concat(entran));
