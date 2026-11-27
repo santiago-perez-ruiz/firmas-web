@@ -70,7 +70,7 @@ async function conServidor(datos, ejecutar, clave = '') {
     const base = `http://127.0.0.1:${puerto}`;
     await ejecutar((ruta, opciones) => fetch(base + ruta, {
       signal: AbortSignal.timeout(10_000), ...opciones,
-    }));
+    }), base);
   } finally {
     hijo.kill();
     await cerrado;
@@ -305,4 +305,27 @@ test('Acceso actual con clave sintética compartida', async (t) => {
       await lector.cancel();
     }
   }, clave);
+});
+
+// La suite normal de Node funciona sin SDK. Esta prueba ejecuta el cliente Kotlin
+// contra el mismo servidor aislado que usan los casos del contrato.
+test('Cliente Kotlin contra el servidor local con SQLite temporal', {
+  skip: !process.env.FIRMAS_GRADLE_PRUEBAS && 'Requiere FIRMAS_GRADLE_PRUEBAS con la ruta a Gradle',
+}, async (t) => {
+  const datos = await fs.mkdtemp(path.join(os.tmpdir(), 'firmas-kotlin-'));
+  t.after(() => fs.rm(datos, { recursive: true, force: true }));
+  await conServidor(datos, async (_pedir, base) => {
+    const gradle = spawn(process.env.FIRMAS_GRADLE_PRUEBAS, [
+      '-p', 'android', '--no-daemon', ':comun:test',
+    ], {
+      cwd: raiz,
+      env: { ...process.env, FIRMAS_URL_PRUEBAS: base },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let salida = '';
+    gradle.stdout.on('data', (dato) => { salida += dato; });
+    gradle.stderr.on('data', (dato) => { salida += dato; });
+    const [codigo] = await once(gradle, 'close');
+    assert.equal(codigo, 0, salida);
+  });
 });

@@ -1,0 +1,9 @@
+services:
+  apk:
+    build: .
+    volumes:
+      - .:/proyecto
+      - gradle-cache:/cache/gradle
+
+volumes:
+  gradle-cache:
