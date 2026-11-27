@@ -13,7 +13,7 @@ const Excel = require('exceljs');
 
 const raiz = path.resolve(__dirname, '../..');
 const png = Buffer.from(
-  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jXWQAAAAASUVORK5CYII=',
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACklEQVR4AWMAAQAABQABNtCI3QAAAABJRU5ErkJggg==',
   'base64'
 );
 const firma = 'data:image/png;base64,' + png.toString('base64');
@@ -40,7 +40,7 @@ const detallada = {
   ],
 };
 
-async function conServidor(datos, ejecutar, clave = '') {
+async function conServidor(datos, ejecutar, clave = '', preparar = '') {
   // El sistema asigna y reserva el puerto en la misma operación de escucha.
   // Interceptamos listen únicamente en el hijo para limitarlo a loopback.
   const arranque = `
@@ -50,6 +50,7 @@ async function conServidor(datos, ejecutar, clave = '') {
       this.once('listening', () => process.send(this.address().port));
       return escuchar.call(this, 0, '127.0.0.1');
     };
+    ${preparar}
     require('./server');
   `;
   const hijo = spawn(process.execPath, ['-e', arranque], {
@@ -123,24 +124,57 @@ test('Contrato actual desde una base vacía', async (t) => {
     const invalida = await json(pedir, '/api/movimientos', 400, post({ tipo: 'ENTREGA' }));
     assert.match(invalida.error, /nombre del empleado/);
 
-    // Línea base de #14: las dos altas pueden prosperar y la última sustituye la primera.
-    const altas = await Promise.all([alta(pedir, rapida), alta(pedir, rapida)]);
-    altas.sort((a, b) => a.id - b.id);
-    const [anterior, activo] = altas;
+    const altas = await Promise.all([
+      pedir('/api/movimientos', post(rapida)), pedir('/api/movimientos', post(rapida)),
+    ]);
+    altas.sort((a, b) => a.status - b.status);
+    assert.deepEqual(altas.map((r) => r.status), [201, 409]);
+    const [anterior, conflicto] = await Promise.all(altas.map((r) => r.json()));
+    assert.equal(conflicto.codigo, 'MOVIMIENTO_ACTIVO');
+    assert.match(anterior.codigo, /^TRX-\d{4}-001$/);
+    assert.deepEqual((await json(pedir, '/api/movimientos')).map((m) => m.id), [anterior.id]);
+    assert.equal((await json(pedir, '/api/activo')).id, anterior.id);
+    const rutaAnterior = `/api/movimientos/${anterior.id}/estado`;
+    const estado = await pedir(rutaAnterior);
+    assert.equal(estado.status, 200);
+    assert.equal(estado.headers.get('cache-control'), 'no-store');
+    assert.deepEqual(await estado.json(), {
+      id: anterior.id, codigo: anterior.codigo, estado: 'esperando', firmado_en: null,
+    });
+    assert.equal((await json(pedir, '/api/movimientos/999/estado', 404)).codigo, 'NO_ENCONTRADO');
+    assert.equal((await json(pedir, '/api/movimientos/0/estado', 400)).codigo, 'VALIDACION');
+    assert.deepEqual(await cancelar(pedir, anterior.id), { ok: true });
+    assert.equal((await json(pedir, rutaAnterior)).estado, 'cancelado');
+
+    const activo = await alta(pedir, rapida);
     assert.match(activo.codigo, /^TRX-\d{4}-002$/);
     assert.equal(activo.modo, 'rapida');
     assert.equal(activo.declaracion, declaraciones.ENTREGA);
-    assert.deepEqual((await json(pedir, '/api/movimientos')).map((m) => m.id), [activo.id]);
-    assert.equal((await json(pedir, '/api/activo')).id, activo.id);
-    assert.equal((await pedir(`/api/movimientos/${activo.id}/estado`)).status, 404);
-    assert.match((await firmar(pedir, anterior.id, firmas, 400)).error, /ya no está activo/);
+    assert.match((await firmar(pedir, anterior.id, firmas, 409)).error, /ya no está activo/);
     assert.deepEqual(await cancelar(pedir, anterior.id), { ok: true });
     assert.equal((await json(pedir, '/api/activo')).id, activo.id);
     assert.match((await firmar(pedir, activo.id, {}, 400)).error, /Falta la firma/);
-    const firmada = await firmar(pedir, activo.id, { firmaEmpleado: firma });
-    assert.equal(firmada.firmaResponsableUrl, null);
+    assert.match((await firmar(pedir, activo.id, { firmaEmpleado: firma }, 400)).error, /del responsable/);
+    assert.match((await firmar(pedir, activo.id, {
+      ...firmas, firmaResponsable: 'data:image/jpeg;base64,YQ==',
+    }, 400)).error, /PNG/);
+    assert.match((await firmar(pedir, activo.id, {
+      ...firmas, firmaResponsable: 'data:image/png;base64,YQ==',
+    }, 400)).error, /PNG válido/);
+    assert.match((await firmar(pedir, activo.id, {
+      ...firmas, firmaResponsable: 'data:image/png;base64,' + Buffer.alloc(2 * 1024 * 1024 + 1).toString('base64'),
+    }, 400)).error, /supera el límite/);
+    assert.equal((await json(pedir, `/api/movimientos/${activo.id}/firmar`, 413,
+      post({ firmaEmpleado: 'a'.repeat(8 * 1024 * 1024) }))).codigo, 'CUERPO_DEMASIADO_GRANDE');
+    assert.deepEqual(await fs.readdir(path.join(datos, 'firmas')), []);
+    const firmada = await firmar(pedir, activo.id);
+    assert.ok(firmada.firmaResponsableUrl);
     assert.equal(firmada.estado, 'firmado');
     assert.equal(await json(pedir, '/api/activo'), null);
+    assert.deepEqual(await json(pedir, `/api/movimientos/${activo.id}/estado`), {
+      id: activo.id, codigo: activo.codigo, estado: 'firmado', firmado_en: firmada.firmado_en,
+    });
+    assert.equal((await firmar(pedir, activo.id, firmas, 409)).codigo, 'ESTADO_INCOMPATIBLE');
 
     const recepcion = await alta(pedir, detallada);
     assert.match(recepcion.codigo, /^TRXD-\d{4}-001$/);
@@ -150,6 +184,9 @@ test('Contrato actual desde una base vacía', async (t) => {
     await firmar(pedir, recepcion.id);
 
     const gestion = { entregaId: recepcion.id, empleado: 'Valor ignorado', modo: 'rapida' };
+    assert.match((await json(pedir, '/api/movimientos', 400, post({
+      ...gestion, tipo: 'DEVOLUCION', herramientas: [{ id: 1 }, { id: 1 }],
+    }))).error, /no está pendiente/);
     const devolucion = await alta(pedir, {
       ...gestion, tipo: 'DEVOLUCION', herramientas: [{ id: 1, cantidad: '1', estado: 'Regular' }],
     });
@@ -177,7 +214,7 @@ test('Contrato actual desde una base vacía', async (t) => {
     const descartado = await alta(pedir, cambio);
     assert.deepEqual(descartado.herramientas.map((h) => h.id), [2, 4]);
     assert.deepEqual(await cancelar(pedir, descartado.id), { ok: true });
-    assert.match((await firmar(pedir, descartado.id, firmas, 400)).error, /ya no está activo/);
+    assert.match((await firmar(pedir, descartado.id, firmas, 409)).error, /ya no está activo/);
     assert.deepEqual(await pendientes(), [2, 3]);
     const aceptado = await alta(pedir, cambio);
     assert.deepEqual(aceptado.herramientas.map((h) => h.id), [2, 5]);
@@ -304,5 +341,64 @@ test('Acceso actual con clave sintética compartida', async (t) => {
     } finally {
       await lector.cancel();
     }
+    for (let i = 0; i < 9; i++) {
+      assert.match((await json(pedir, '/entrar', 401, post({ clave: '654321' }))).error, /incorrecto/);
+    }
+    assert.match((await json(pedir, '/entrar', 429, post({ clave }))).error, /Demasiados intentos/);
   }, clave);
+});
+
+test('Fallo al guardar el segundo PNG y reinicio durante la publicación', async (t) => {
+  const datos = await fs.mkdtemp(path.join(os.tmpdir(), 'firmas-fallo-'));
+  t.after(() => fs.rm(datos, { recursive: true, force: true }));
+  const imagenes = path.join(datos, 'firmas');
+  let pendiente;
+  let publicadas;
+  await conServidor(datos, async (pedir) => {
+    const anterior = await alta(pedir, rapida);
+    const firmado = await firmar(pedir, anterior.id);
+    publicadas = [firmado.firma_empleado, firmado.firma_responsable].sort();
+    pendiente = await alta(pedir, rapida);
+    assert.equal((await firmar(pedir, pendiente.id, firmas, 500)).codigo, 'ERROR_GUARDADO');
+    assert.deepEqual((await fs.readdir(imagenes)).sort(), publicadas);
+    assert.equal((await json(pedir, '/api/activo')).id, pendiente.id);
+  }, '', `
+    const fs = require('node:fs');
+    const escribir = fs.writeFileSync;
+    let escrituras = 0;
+    fs.writeFileSync = function (ruta, ...args) {
+      if (String(ruta).endsWith('.tmp') && ++escrituras === 4) {
+        escribir(ruta, Buffer.from('escritura parcial'), { flag: 'wx' });
+        throw Object.assign(new Error('Fallo sintético'), { code: 'EIO' });
+      }
+      return escribir(ruta, ...args);
+    };
+  `);
+
+  await conServidor(datos, async (pedir) => {
+    await assert.rejects(pedir(`/api/movimientos/${pendiente.id}/firmar`, post(firmas)), /fetch failed/);
+  }, '', `
+    const fs = require('node:fs');
+    const renombrar = fs.renameSync;
+    fs.renameSync = function (origen, destino) {
+      renombrar(origen, destino);
+      if (String(origen).endsWith('.tmp')) process.kill(process.pid, 'SIGKILL');
+    };
+  `);
+  const restos = (await fs.readdir(imagenes)).filter((nombre) => !publicadas.includes(nombre));
+  assert.equal(restos.length, 2);
+  assert.equal(restos.filter((nombre) => nombre.endsWith('.tmp')).length, 1);
+  assert.equal(restos.filter((nombre) => nombre.endsWith('.png')).length, 1);
+  assert.equal(revisarBase(datos).at(-1).estado, 'esperando');
+
+  await conServidor(datos, async (pedir) => {
+    assert.deepEqual((await fs.readdir(imagenes)).sort(), publicadas);
+    assert.equal((await json(pedir, `/api/movimientos/${pendiente.id}/estado`)).estado, 'esperando');
+    for (const nombre of publicadas) {
+      const respuesta = await pedir('/firmas/' + nombre);
+      assert.equal(respuesta.status, 200);
+      assert.deepEqual(Buffer.from(await respuesta.arrayBuffer()), png);
+    }
+    assert.equal((await firmar(pedir, pendiente.id)).estado, 'firmado');
+  });
 });

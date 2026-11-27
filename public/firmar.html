@@ -358,10 +358,10 @@ $('#btnConfirmar').addEventListener('click', async () => {
     });
     if (!r.ok) {
       const e = await r.json().catch(() => ({}));
-      // El almacenista cancelo el movimiento o envio otro mientras se firmaba (por el
+      // El almacenista canceló el movimiento mientras se firmaba (por el
       // tunel la tablet se entera con segundos de retraso). Reintentar no sirve: se
       // avisa en la pantalla de espera y se vuelve a ella.
-      if (r.status === 400 && e.error === MOVIMIENTO_INACTIVO) {
+      if (r.status === 409 && e.codigo === 'ESTADO_INCOMPATIBLE' && e.error === MOVIMIENTO_INACTIVO) {
         movimientoYaNoActivo(enCurso);
         return;
       }

@@ -1,10 +1,8 @@
 # Contrato HTTP para la app móvil
 
 La columna «Permiso móvil» describe el contrato de destino. Las identidades, la
-vinculación, la revocación y los filtros por rol quedan pendientes de #13. El
-turno con conflicto, la lectura por ID y la publicación de ambas firmas quedan
-pendientes de #14. Los [casos ejecutables](../pruebas/contrato/README.md) fijan el
-comportamiento disponible en el servidor de #12.
+vinculación, la revocación y los filtros por rol quedan pendientes de #13. Los [casos ejecutables](../pruebas/contrato/README.md) cubren el turno único,
+la lectura por ID y la publicación de ambas firmas.
 
 ## Rutas
 
@@ -23,10 +21,10 @@ enteros y las fechas de creación y firma son cadenas ISO 8601 en UTC.
 | `GET /api/export.xlsx` | Administración | Sin cuerpo. XLSX adjunto `Registro_Firmas_YYYY-MM-DD.xlsx`, con las hojas Registro de Firmas e Informe Diario. La hoja de firmas filtra después de obtener los 1.000 movimientos más recientes sin cancelar. El informe parte de hasta 1.000 grupos. |
 | `GET /firmas/:archivo` | Administración con acceso al registro | Sin cuerpo. PNG de una URL relativa devuelta por la API. |
 | `GET /api/activo` | Operación y tablet vinculada | Sin cuerpo. Movimiento en espera o `null`. La tablet recibe el movimiento únicamente si está asignado a ella, con `Cache-Control: no-store` (#13 y #14). Hoy cualquier sesión con acceso obtiene el movimiento completo. |
-| `POST /api/movimientos` | Operación | Alta descrita abajo. `201` con el movimiento en estado `esperando`. En #14, `409` si hay un activo. Hoy una nueva alta válida cancela el anterior. |
-| `GET /api/movimientos/:id/estado` | Operación y tablet autorizada para ese movimiento | Sin cuerpo. `{id, codigo, estado, firmado_en}`, incluso si ya salió del activo. `firmado_en` es `null` mientras falte la firma. Pendiente de #14, con permisos de #13. |
-| `POST /api/movimientos/:id/firmar` | Tablet autorizada para el movimiento | `{firmaEmpleado, firmaResponsable}`, dos cadenas data URL `data:image/png;base64,...`. `200` con el movimiento firmado. Hoy la del responsable es opcional y el servidor decodifica sin comprobar el formato de imagen. |
-| `POST /api/movimientos/:id/cancelar` | Operación | Sin cuerpo. `200` y `{"ok":true}`. Solo cambia el ID indicado si está esperando. Hoy también devuelve éxito y emite un aviso si no modificó ninguna fila. |
+| `POST /api/movimientos` | Operación | Alta descrita abajo. `201` con el movimiento en estado `esperando`. `409` si hay un activo. El activo conserva su estado. |
+| `GET /api/movimientos/:id/estado` | Operación y tablet autorizada para ese movimiento | Sin cuerpo. `{id, codigo, estado, firmado_en}`, incluso si ya salió del activo. `firmado_en` es `null` mientras falte la firma. Los permisos por rol corresponden a #13. |
+| `POST /api/movimientos/:id/firmar` | Tablet autorizada para el movimiento | `{firmaEmpleado, firmaResponsable}`, dos cadenas data URL `data:image/png;base64,...`. `200` con el movimiento firmado. Cada imagen debe ser un PNG sin entrelazado, de hasta 8 millones de píxeles y 2 MiB decodificados por defecto. El límite en bytes se configura con `FIRMA_MAX_BYTES`. El servidor publica ambas imágenes al confirmar la firma. |
+| `POST /api/movimientos/:id/cancelar` | Operación | Sin cuerpo. `200` y `{"ok":true}`. Solo cambia el ID indicado si está esperando. Si el ID ya no espera firma, devuelve éxito sin emitir un aviso. |
 | `GET /api/eventos` | Sesiones autorizadas en LAN durante la transición | Sin cuerpo. SSE `text/event-stream`, con `latido` (`{}`) cada 8 s, `activo` (movimiento o `null`) y `firmado` (movimiento). Si se conserva, filtrar por rol y tratar cada aviso como señal para consultar. |
 | `POST /api/dispositivos/vincular` | Equipo en provisión con código de un solo uso | Propuesta para #13. `{"codigo":"..."}` y `200` con `{dispositivoId, credencial}`. La credencial es revocable y se guarda con protección de Android Keystore. |
 | `GET /api/dispositivos/sesion` | Sesión móvil autenticada | Ruta propuesta para #13. Sin cuerpo. `200` con `{dispositivoId, rol}` para comprobar acceso tras probar la dirección con salud. |
@@ -56,9 +54,7 @@ de estado de la línea.
 La devolución y el cambio heredan empleado, cédula, departamento, ficha y modo.
 Cada línea que vuelve conserva descripción y cantidad originales. La unidad que
 regresa es la línea completa. Los ID salientes deben pertenecer a las pendientes
-y ser únicos en la solicitud. Hoy CAMBIO rechaza duplicados, mientras que
-DEVOLUCION los admite dentro de una misma alta. La validación uniforme queda
-pendiente de #14. Las líneas nuevas de cambio reciben ID por encima del máximo
+y ser únicos en la solicitud. Las líneas nuevas de cambio reciben ID por encima del máximo
 del grupo, incluidos los cambios cancelados.
 
 Un movimiento completo contiene:
@@ -98,17 +94,19 @@ cliente web durante la transición. Ejemplo de conflicto:
 
 | HTTP | Código estable | Cuándo y cómo proceder |
 | --- | --- | --- |
-| 400 | `VALIDACION` | Cuerpo, ID o PNG inválido. Corregir el dato antes de enviar otra vez. En #14 se comprueban ambas imágenes y su tamaño antes de confirmar. Hoy el límite general del parser JSON es 8 MB. |
+| 400 | `VALIDACION` | Cuerpo, ID o PNG inválido. Corregir el dato antes de enviar otra vez. El límite por imagen se aplica al PNG decodificado. |
 | 401 | `SESION_REQUERIDA` | Falta sesión válida, caducó o fue revocada. Recuperar acceso autorizado y reconciliar las escrituras inciertas antes de repetir. |
 | 403 | `PERMISO_DENEGADO` | El rol o la asignación impiden la operación. Resolver el permiso o la asignación. |
 | 404 | `NO_ENCONTRADO` | ID o recurso inexistente dentro del alcance autorizado. Actualizar la consulta. |
 | 409 | `MOVIMIENTO_ACTIVO` | Ya hay un turno ocupado. Conservar el borrador y consultar el activo. Esperar a que se resuelva o cancelar por ID con confirmación. |
-| 409 | `ESTADO_INCOMPATIBLE` | Firma o cancelación incompatible con el estado del movimiento. Consultar el estado por ID y usar el resultado definitivo. |
+| 409 | `ESTADO_INCOMPATIBLE` | Firma incompatible con el estado del movimiento. Consultar el estado por ID y usar el resultado definitivo. |
 
-Los códigos estables y la normalización de errores corresponden a #13 y #14
-según la ruta. Hoy los manejadores de escritura y el PDF devuelven `400`
-con `{error}` incluso en varios conflictos o ID ausentes. Rutas ausentes y
-errores del parser pueden devolver HTML.
+| 413 | `CUERPO_DEMASIADO_GRANDE` | El cuerpo JSON supera 8 MiB, incluida la codificación base64. Reducir el cuerpo antes de reenviar. |
+| 429 | Sin código estable en `/entrar` | Con clave compartida, tras nueve intentos fallidos por IP en 10 minutos la siguiente solicitud recibe `{"error":"Demasiados intentos. Espere unos minutos."}`. Esperar a que venza la ventana. |
+| 500 | `ERROR_GUARDADO` | Falló la escritura o publicación de un PNG. Consultar el estado por ID antes de reintentar. |
+
+La autorización y sus códigos estables corresponden a #13. El PDF conserva los
+errores del cliente web y una ruta inexistente puede devolver HTML.
 
 - Las lecturas y descargas se pueden repetir. Para el activo, consultar al
   abrir, despertar o recuperar conexión y cada 3 s en primer plano. Mantener
@@ -119,8 +117,7 @@ errores del parser pueden devolver HTML.
   autorizado y verificar con la tablet. Exigir confirmación antes de otra alta.
   Un alta sin ID conocido carece de reconciliación unívoca. El contrato inicial
   no incluye reintentos automáticos ni claves de idempotencia.
-- Tras firmar o cancelar con respuesta perdida, consultar el estado por ID
-  (#14). Si ya está firmado o cancelado, mostrar el estado definitivo. Si
+- Tras firmar o cancelar con respuesta perdida, consultar el estado por ID. Si ya está firmado o cancelado, mostrar el estado definitivo. Si
   sigue esperando, confirmar que es el turno correcto y repetir la acción
   sobre ese mismo ID. Conservar ambas firmas hasta confirmar el resultado.
 - Si se pierde la respuesta de vinculación, comprobar la sesión si la credencial

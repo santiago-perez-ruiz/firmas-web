@@ -2,10 +2,24 @@
 
 const fs = require('fs');
 const path = require('path');
+const { randomUUID } = require('node:crypto');
+const { PNG } = require('pngjs');
 const Database = require('better-sqlite3');
 
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', 'data');
 const FIRMAS_DIR = path.join(DATA_DIR, 'firmas');
+
+const limiteConfigurado = Number(process.env.FIRMA_MAX_BYTES);
+const FIRMA_MAX_BYTES = Number.isSafeInteger(limiteConfigurado) && limiteConfigurado > 0
+  ? limiteConfigurado : 2 * 1024 * 1024;
+
+class ErrorMovimiento extends Error {
+  constructor(estado, codigo, mensaje) {
+    super(mensaje);
+    this.estado = estado;
+    this.codigo = codigo;
+  }
+}
 
 fs.mkdirSync(FIRMAS_DIR, { recursive: true });
 
@@ -371,10 +385,11 @@ function prepararMovimiento(d) {
   if (d.tipo === 'CAMBIO') return prepararCambio(d, entrega, porId, heredado);
 
   const herramientas = (d.herramientas || []).map((h) => {
-    const original = porId.get(Number(h.id));
+    const original = porId.get(Number(h?.id));
     if (!original) {
-      throw new Error(`La herramienta "${h.descripcion || h.id}" no está pendiente en ${entrega.codigo}`);
+      throw new Error(`La herramienta "${h?.descripcion || h?.id || 'sin ID'}" no está pendiente en ${entrega.codigo}`);
     }
+    porId.delete(original.id);
     return {
       id: original.id,
       descripcion: original.descripcion,
@@ -396,7 +411,7 @@ function prepararMovimiento(d) {
  * en una devolucion. Las que `recibe` se escriben a mano —descripcion, cantidad,
  * estado y observaciones— y no heredan nada de la que sale: el taladro nuevo no tiene
  * por que parecerse al viejo. Reciben un id nuevo a continuacion del mayor del grupo
- * (la recepcion y sus cambios no cancelados), para que despues se puedan devolver o
+ * (la recepcion y todos sus cambios), para que despues se puedan devolver o
  * cambiar a su vez por ese id.
  */
 function prepararCambio(d, entrega, porId, heredado) {
@@ -455,9 +470,11 @@ function prepararCambio(d, entrega, porId, heredado) {
 
 /** Crea el movimiento y lo deja en pantalla de la tablet. Solo puede haber uno esperando. */
 function crearYActivar(entrada) {
-  const datos = prepararMovimiento(entrada);
-  const tx = db.transaction((d) => {
-    db.prepare(`UPDATE movimientos SET estado = 'cancelado' WHERE estado = 'esperando'`).run();
+  const tx = db.transaction(() => {
+    if (db.prepare(`SELECT 1 FROM movimientos WHERE estado = 'esperando' LIMIT 1`).get()) {
+      throw new ErrorMovimiento(409, 'MOVIMIENTO_ACTIVO', 'Ya hay un movimiento esperando firma');
+    }
+    const d = prepararMovimiento(entrada);
     const info = db
       .prepare(
         `INSERT INTO movimientos
@@ -479,9 +496,9 @@ function crearYActivar(entrada) {
         entrega_id: d.entregaId || null,
         creado_en: ahora(),
       });
-    return info.lastInsertRowid;
+    return obtener(info.lastInsertRowid);
   });
-  return obtener(tx(datos));
+  return tx.immediate();
 }
 
 function obtener(id) {
@@ -501,45 +518,146 @@ function listar(limite = 200) {
     .map(normalizar);
 }
 
-/** Guarda un data URL PNG en disco y devuelve el nombre de archivo. */
-function guardarFirma(id, quien, dataUrl) {
-  const base64 = String(dataUrl || '').replace(/^data:image\/png;base64,/, '');
-  if (!base64) throw new Error('Firma vacia');
-  const nombre = `${id}-${quien}.png`;
-  fs.writeFileSync(path.join(FIRMAS_DIR, nombre), Buffer.from(base64, 'base64'));
-  return nombre;
+const consultarEstado = db.prepare(
+  `SELECT id, codigo, estado, firmado_en FROM movimientos WHERE id = ?`
+);
+
+function estadoDe(id) {
+  const estado = consultarEstado.get(id);
+  if (!estado) throw new ErrorMovimiento(404, 'NO_ENCONTRADO', 'Movimiento no encontrado');
+  return estado;
+}
+
+function leerFirma(dataUrl, quien) {
+  if (!dataUrl) throw new Error(`Falta la firma ${quien}`);
+  const prefijo = 'data:image/png;base64,';
+  if (typeof dataUrl !== 'string' || !dataUrl.startsWith(prefijo)) {
+    throw new Error(`La firma ${quien} debe ser un PNG en base64`);
+  }
+  const base64 = dataUrl.slice(prefijo.length);
+  const errorTamano = `La firma ${quien} supera el límite de ${FIRMA_MAX_BYTES} bytes`;
+  if (base64.length > Math.ceil(FIRMA_MAX_BYTES / 3) * 4) throw new Error(errorTamano);
+  const png = Buffer.from(base64, 'base64');
+  if (png.length > FIRMA_MAX_BYTES) throw new Error(errorTamano);
+  if (!png.length || png.toString('base64') !== base64) {
+    throw new Error(`La firma ${quien} debe ser un PNG en base64`);
+  }
+
+  try {
+    // Limita las dimensiones antes de descomprimir los píxeles.
+    if (png.readUInt32BE(8) !== 13 || png.toString('ascii', 12, 16) !== 'IHDR' || png[28] !== 0) {
+      throw new Error('Cabecera PNG no admitida');
+    }
+    const ancho = png.readUInt32BE(16);
+    const alto = png.readUInt32BE(20);
+    if (!ancho || !alto || ancho * alto > 8_000_000) throw new Error('Dimensiones fuera de rango');
+    // Un segundo IHDR podría sustituir las dimensiones que acabamos de validar.
+    for (let inicio = 33; inicio + 12 <= png.length;) {
+      const siguiente = inicio + 12 + png.readUInt32BE(inicio);
+      if (siguiente > png.length || png.toString('ascii', inicio + 4, inicio + 8) === 'IHDR') {
+        throw new Error('Bloque PNG no válido');
+      }
+      inicio = siguiente;
+    }
+    PNG.sync.read(png);
+  } catch {
+    throw new Error(`La firma ${quien} debe ser un PNG válido de hasta 8 millones de píxeles`);
+  }
+  return png;
+}
+
+const confirmarFirma = db.prepare(
+  `UPDATE movimientos
+      SET firma_empleado = ?, firma_responsable = ?, estado = 'firmado', firmado_en = ?
+    WHERE id = ? AND estado = 'esperando'`
+);
+
+function quitarArchivo(ruta) {
+  try {
+    fs.rmSync(ruta, { force: true });
+  } catch (error) {
+    console.error('No se pudo limpiar un archivo de firma', error.code);
+  }
+}
+
+function guardarArchivo(guardar) {
+  try {
+    guardar();
+  } catch (error) {
+    console.error('Falló la escritura de una firma', error.code);
+    throw new ErrorMovimiento(500, 'ERROR_GUARDADO', 'No se pudieron guardar las firmas');
+  }
 }
 
 function firmar(id, firmaEmpleado, firmaResponsable) {
-  const mov = obtener(id);
-  if (!mov) throw new Error('Movimiento no encontrado');
-  if (mov.estado === 'firmado') throw new Error('Este movimiento ya fue firmado');
-  // Solo se firma el que esta activo. Una tablet atrasada (por el tunel tarda segundos
-  // en enterarse de una cancelacion) podria firmar uno cancelado y resucitarlo: una
-  // devolucion cerraria otra vez lo ya cerrado, o un cambio duplicaria herramientas.
-  if (mov.estado !== 'esperando') throw new Error('Este movimiento ya no está activo');
+  const archivos = [];
+  const tx = db.transaction(() => {
+    const { estado } = estadoDe(id);
+    if (estado === 'firmado') {
+      throw new ErrorMovimiento(409, 'ESTADO_INCOMPATIBLE', 'Este movimiento ya fue firmado');
+    }
+    if (estado !== 'esperando') {
+      throw new ErrorMovimiento(409, 'ESTADO_INCOMPATIBLE', 'Este movimiento ya no está activo');
+    }
+    const empleado = leerFirma(firmaEmpleado, 'del empleado');
+    const responsable = leerFirma(firmaResponsable, 'del responsable');
 
-  const archivoEmpleado = guardarFirma(id, 'empleado', firmaEmpleado);
-  const archivoResponsable = firmaResponsable ? guardarFirma(id, 'responsable', firmaResponsable) : null;
+    const lote = randomUUID();
+    for (const [quien, imagen] of [['empleado', empleado], ['responsable', responsable]]) {
+      const nombre = `${id}-${quien}-${lote}.png`;
+      const destino = path.join(FIRMAS_DIR, nombre);
+      const temporal = path.join(FIRMAS_DIR, `.${nombre}.tmp`);
+      archivos.push({ nombre, destino, temporal });
+      guardarArchivo(() => fs.writeFileSync(temporal, imagen, { flag: 'wx' }));
+    }
+    for (const { temporal, destino } of archivos) {
+      guardarArchivo(() => fs.renameSync(temporal, destino));
+    }
+    confirmarFirma.run(archivos[0].nombre, archivos[1].nombre, ahora(), id);
+    return obtener(id);
+  });
 
-  // El `AND estado = 'esperando'` cubre una cancelacion que llegue entre la lectura
-  // de arriba y esta escritura.
-  const info = db.prepare(
-    `UPDATE movimientos
-        SET firma_empleado = ?, firma_responsable = ?, estado = 'firmado', firmado_en = ?
-      WHERE id = ? AND estado = 'esperando'`
-  ).run(archivoEmpleado, archivoResponsable, ahora(), id);
-  if (info.changes === 0) throw new Error('Este movimiento ya no está activo');
-
-  return obtener(id);
+  try {
+    return tx.immediate();
+  } catch (error) {
+    for (const { temporal, destino } of archivos) {
+      quitarArchivo(temporal);
+      quitarArchivo(destino);
+    }
+    throw error;
+  }
 }
 
+const firmasPublicadas = db.prepare(
+  `SELECT 1 FROM movimientos WHERE estado = 'firmado' AND (firma_empleado = ? OR firma_responsable = ?) LIMIT 1`
+);
+
+function firmaPublicada(nombre) {
+  return Boolean(firmasPublicadas.get(nombre, nombre));
+}
+
+// El mismo bloqueo de escritura impide limpiar los archivos de una firma en curso.
+db.transaction(() => {
+  const referencias = new Set(db.prepare(
+    `SELECT firma_empleado AS nombre FROM movimientos WHERE estado = 'firmado'
+     UNION SELECT firma_responsable FROM movimientos WHERE estado = 'firmado'`
+  ).pluck().all());
+  const nombreFirma = /^(?:\.)?\d+-(?:empleado|responsable)(?:-[0-9a-f-]{36})?\.png(?:\.tmp)?$/;
+  for (const archivo of fs.readdirSync(FIRMAS_DIR, { withFileTypes: true })) {
+    if (archivo.isFile() && nombreFirma.test(archivo.name) && !referencias.has(archivo.name)) {
+      quitarArchivo(path.join(FIRMAS_DIR, archivo.name));
+    }
+  }
+}).immediate();
+
 function cancelar(id) {
-  db.prepare(`UPDATE movimientos SET estado = 'cancelado' WHERE id = ? AND estado = 'esperando'`).run(id);
+  return db.prepare(
+    `UPDATE movimientos SET estado = 'cancelado' WHERE id = ? AND estado = 'esperando'`
+  ).run(id).changes > 0;
 }
 
 module.exports = {
-  db, DATA_DIR, FIRMAS_DIR, DECLARACIONES,
-  crearYActivar, obtener, activo, listar, firmar, cancelar,
+  db, DATA_DIR, FIRMAS_DIR, DECLARACIONES, ErrorMovimiento,
+  crearYActivar, obtener, estadoDe, activo, listar, firmar, firmaPublicada, cancelar,
   entregasPendientes, historial,
 };

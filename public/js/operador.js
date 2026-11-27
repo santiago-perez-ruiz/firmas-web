@@ -2,12 +2,8 @@
  * La maquinaria comun de las dos pantallas de operador: / (entrega rapida) y
  * /detallada (la del formulario largo, para el caso raro).
  *
- * Se saco de index.html cuando aparecio la segunda, y no por ahorrar lineas: el
- * velo que tapa el formulario mientras la tablet tiene un movimiento no es
- * cosmetica. Solo puede haber un movimiento activo a la vez y armar otro cancela el
- * anterior en silencio, dejando al empleado que estaba firmando con la pantalla en
- * blanco. Dos copias de esa regla se separan en la primera correccion, que es
- * exactamente la trampa que este proyecto ya evita en firmas-android.
+ * Las dos pantallas comparten el bloqueo del formulario mientras la tablet
+ * espera una firma. Si otra pantalla ocupa el turno, el servidor devuelve 409.
  *
  * Cada pantalla pone su formulario; esto pone el comportamiento. La pagina debe
  * traer estos ids: #formulario, #cuerpoHerr, #btnAgregar, #btnEnviar, #aviso,
@@ -117,10 +113,6 @@
 
     /**
      * Bloquea el formulario mientras la tablet tiene un movimiento.
-     *
-     * No es solo cosmetica: solo puede haber un movimiento activo a la vez, y enviar
-     * otro cancela el anterior en silencio. Con el formulario tapado no se puede
-     * dejar a un empleado con la pantalla en blanco por accidente.
      */
     function bloquear(mov) {
       $('#velo').classList.toggle('oculto', !mov);
@@ -173,6 +165,10 @@
           body: JSON.stringify(cuerpo),
         });
         const datos = await r.json();
+        if (r.status === 409) {
+          avisar(datos.error || 'Ya hay un movimiento esperando firma', 'error');
+          return;
+        }
         if (!r.ok) throw new Error(datos.error || 'No se pudo enviar');
         canal.olvidar();
         pintarEstado(datos);

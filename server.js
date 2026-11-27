@@ -10,13 +10,27 @@ const { construirPdf } = require('./src/pdf');
 const app = express();
 const PUERTO = Number(process.env.PORT || 3000);
 
-app.use(express.json({ limit: '8mb' }));      // las firmas viajan como data URL PNG
+app.use(express.json({ limit: '8mb' }));
+app.use((err, req, res, next) => {
+  if (err.type === 'entity.too.large') {
+    return res.status(413).json({ codigo: 'CUERPO_DEMASIADO_GRANDE', error: 'El cuerpo supera el límite de 8 MiB' });
+  }
+  if (err.type === 'entity.parse.failed') {
+    return res.status(400).json({ codigo: 'VALIDACION', error: 'El cuerpo JSON no es válido' });
+  }
+  next(err);
+});
 
 // La puerta va antes que los estaticos: si no, /firmar y el CSS se servirian sin pasar por ella.
 auth.instalar(app);
 
 app.use(express.static(path.join(__dirname, 'public'), { extensions: ['html'] }));
-app.use('/firmas', express.static(store.FIRMAS_DIR));
+app.use('/firmas', (req, res, next) => {
+  let nombre;
+  try { nombre = decodeURIComponent(req.path.slice(1)); } catch { return res.sendStatus(404); }
+  if (!store.firmaPublicada(nombre)) return res.sendStatus(404);
+  next();
+}, express.static(store.FIRMAS_DIR, { index: false }));
 
 // ------------------------------------------------------- avisos en vivo (SSE)
 const clientes = new Set();
@@ -64,7 +78,27 @@ function manejar(fn) {
   };
 }
 
-app.get('/api/activo', (req, res) => res.json(store.activo()));
+function manejarMovimiento(fn) {
+  return (req, res) => {
+    try {
+      fn(req, res);
+    } catch (err) {
+      const { estado = 400, codigo = 'VALIDACION', message: error } = err;
+      if (estado >= 500) console.error(error);
+      res.status(estado).json({ codigo, error });
+    }
+  };
+}
+
+function idMovimiento(req) {
+  const id = Number(req.params.id);
+  if (!/^\d+$/.test(req.params.id) || !Number.isSafeInteger(id) || id < 1) {
+    throw new Error('El ID del movimiento no es válido');
+  }
+  return id;
+}
+
+app.get('/api/activo', (req, res) => res.set('Cache-Control', 'no-store').json(store.activo()));
 
 app.get('/api/movimientos', (req, res) => res.json(store.listar()));
 
@@ -78,7 +112,7 @@ app.get('/api/entregas-pendientes', (req, res) => res.json(store.entregasPendien
 
 app.post(
   '/api/movimientos',
-  manejar((req, res) => {
+  manejarMovimiento((req, res) => {
     const { tipo } = req.body || {};
     if (!['ENTREGA', 'DEVOLUCION', 'CAMBIO'].includes(tipo)) {
       throw new Error('Tipo debe ser ENTREGA, DEVOLUCION o CAMBIO');
@@ -102,12 +136,15 @@ app.post(
   })
 );
 
+app.get('/api/movimientos/:id/estado', manejarMovimiento((req, res) => {
+  res.set('Cache-Control', 'no-store').json(store.estadoDe(idMovimiento(req)));
+}));
+
 app.post(
   '/api/movimientos/:id/firmar',
-  manejar((req, res) => {
+  manejarMovimiento((req, res) => {
     const { firmaEmpleado, firmaResponsable } = req.body || {};
-    if (!firmaEmpleado) throw new Error('Falta la firma del empleado');
-    const mov = store.firmar(Number(req.params.id), firmaEmpleado, firmaResponsable || null);
+    const mov = store.firmar(idMovimiento(req), firmaEmpleado, firmaResponsable);
     avisar('firmado', mov);
     avisar('activo', null);
     res.json(mov);
@@ -116,9 +153,8 @@ app.post(
 
 app.post(
   '/api/movimientos/:id/cancelar',
-  manejar((req, res) => {
-    store.cancelar(Number(req.params.id));
-    avisar('activo', null);
+  manejarMovimiento((req, res) => {
+    if (store.cancelar(idMovimiento(req))) avisar('activo', null);
     res.json({ ok: true });
   })
 );
