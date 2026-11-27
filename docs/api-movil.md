@@ -19,8 +19,8 @@ enteros y las fechas de creación y firma son cadenas ISO 8601 en UTC.
 | `GET /api/entregas-pendientes` | Operación | Sin cuerpo. Lista de recepciones firmadas con al menos una herramienta pendiente, de más reciente a más antigua. Cada movimiento añade `pendientes` (lista de líneas). |
 | `GET /api/historial` | Administración | Sin cuerpo. `{grupos, sueltas}`, descrito abajo. |
 | `GET /api/movimientos` | Administración | Sin cuerpo. Hasta 200 movimientos sin cancelar, por ID descendente. |
-| `GET /api/entregas/:id/pdf` | Administración | Sin cuerpo. PDF adjunto del grupo de la recepción, con nombre `<codigo>.pdf`. La búsqueda actual abarca las últimas 1.000 recepciones sin cancelar. |
-| `GET /api/export.xlsx` | Administración | Sin cuerpo. XLSX adjunto `Registro_Firmas_YYYY-MM-DD.xlsx`, con las hojas Registro de Firmas e Informe Diario. La hoja de firmas filtra después de obtener los 1.000 movimientos más recientes sin cancelar. El informe parte de hasta 1.000 grupos. |
+| `GET /api/entregas/:id/pdf` | Administración | Sin cuerpo. PDF adjunto del grupo de la recepción, con nombre `<codigo>.pdf`. Consulta por ID de recepción sin cancelar y devuelve `404` si el grupo no existe. |
+| `GET /api/export.xlsx` | Administración | Sin cuerpo. XLSX adjunto `Registro_Firmas_YYYY-MM-DD.xlsx`, con las hojas Registro de Firmas e Informe Diario. La hoja de firmas incluye todos los movimientos firmados. El informe calcula las herramientas de todos los grupos de recepciones firmadas. |
 | `GET /firmas/:archivo` | Administración con acceso al registro | Sin cuerpo. PNG de una URL relativa devuelta por la API. |
 | `GET /api/activo` | Operación y tablet vinculada | Sin cuerpo. Movimiento en espera o `null`. La tablet recibe el movimiento únicamente si está asignado a ella, con `Cache-Control: no-store` (#13 y #14). Hoy cualquier sesión con acceso obtiene el movimiento completo. |
 | `POST /api/movimientos` | Operación | Alta descrita abajo. `201` con el movimiento en estado `esperando`. En #14, `409` si hay un activo. Hoy una nueva alta válida cancela el anterior. |
@@ -77,6 +77,8 @@ Un movimiento completo contiene:
 
 En historial, cada grupo tiene `{entrega, devoluciones, pendientes, ciclo}`.
 Hay hasta 200 grupos de recepciones sin cancelar, ordenados por ID descendente.
+El panel consulta `GET /api/historial?completo=1` para obtener todos los grupos
+con el mismo orden y el indicador booleano `operacionWeb`.
 `devoluciones` agrupa devoluciones y cambios sin cancelar por ID ascendente,
 incluidos los que esperan firma. `sueltas` conserva los registros antiguos sin
 recepción vinculada. `entrega.herramientas` incluye las incorporadas en cambios

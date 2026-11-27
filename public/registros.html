@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Registros — Control de Herramientas</title>
+<title>Registros · Control de Herramientas</title>
 <link rel="stylesheet" href="/css/app.css">
 <style>
   .envoltura { max-width: 1000px; }
@@ -258,10 +258,10 @@
 <div class="barra">
   <h1>Control de Herramientas</h1>
   <span class="sep"></span>
-  <a href="/">Recepci&oacute;n r&aacute;pida por entrega diaria</a>
-  <a href="/detallada">Recepci&oacute;n detallada por herramienta asignada</a>
+  <a class="oculto" data-operacion href="/rapida">Recepci&oacute;n r&aacute;pida por entrega diaria</a>
+  <a class="oculto" data-operacion href="/detallada">Recepci&oacute;n detallada por herramienta asignada</a>
   <a href="/registros" class="activo">Registros</a>
-  <a href="/firmar" target="_blank">Pantalla de firma &#8599;</a>
+  <a class="oculto" data-operacion href="/firmar" target="_blank">Pantalla de firma &#8599;</a>
 </div>
 
 <div class="envoltura">
@@ -305,6 +305,7 @@ const $ = (s) => document.querySelector(s);
 let abierto = null;      // id de la entrega abierta, o null si se ve la lista
 let gestionando = null;  // id de la entrega cuya devolución o cambio se está armando
 let gestionModo = 'devolucion';  // 'devolucion' | 'cambio' (el cambio, solo en detalladas)
+let operacionWeb = false;
 let ultimoHistorial = { grupos: [], sueltas: [] };
 
 /**
@@ -433,7 +434,7 @@ function medirTinta(img) {
  * Encuadra la firma dentro de su marco.
  *
  * El PNG original se queda como está: solo se desplaza y se escala con CSS. Nada
- * de volcar el recorte a un data URL — doce firmas en base64 dentro del DOM lo
+ * de volcar el recorte a un data URL · doce firmas en base64 dentro del DOM lo
  * dejan pesando medio megabyte, y la imagen ya está en la caché del navegador.
  */
 function encuadrar(img) {
@@ -697,6 +698,7 @@ async function enviarGestion(tipo, herramientas) {
     if (!r.ok) throw new Error(datos.error || 'No se pudo enviar');
 
     gestionando = null;
+    pintarDetalle();
     avisar(datos.codigo + ' enviado a la tablet. El empleado ya puede firmar.', 'ok');
     cargar();
   } catch (err) {
@@ -757,7 +759,7 @@ function enviarCambio() {
 // ---------------------------------------------------------------- firmas
 
 function firma(url, quien, nombre) {
-  const titulo = quien + (nombre ? ' — ' + nombre : '');
+  const titulo = quien + (nombre ? ' · ' + nombre : '');
   if (!url) {
     return '<figure class="firma falta"><div>Sin firma</div>' +
            '<figcaption>' + escapar(titulo) + '</figcaption></figure>';
@@ -969,7 +971,7 @@ function pintarDetalle() {
     (devoluciones
       ? '<div class="seccion"><h3>' + (hayCambios ? 'Devoluciones y cambios' : 'Devoluciones') + '</h3></div>' + devoluciones
       : '') +
-    bloqueGestion(g) +
+    (operacionWeb ? bloqueGestion(g) : '') +
     '</div>';
 
   // Una imagen que ya estaba en la caché del navegador puede quedar completa antes
@@ -1003,42 +1005,57 @@ function pintar() {
 
 // ---------------------------------------------------------------- carga
 
-function cargar() {
-  fetch('/api/historial', { cache: 'no-store' })
-    .then((r) => r.json())
-    .then((datos) => {
-      ultimoHistorial = datos;
-      pintar();
-    })
-    .catch(() => {
-      $('#panel').innerHTML = '<div class="tarjeta"><div class="vacio">No se pudo conectar con el servidor.</div></div>';
+let cargando = false;
+let escucharOperacion = false;
+let ultimaRespuesta = null;
+
+async function cargar() {
+  if (cargando) return;
+  cargando = true;
+  try {
+    const respuesta = await fetch('/api/historial?completo=1', {
+      cache: 'no-store',
+      signal: AbortSignal.timeout(10000),
     });
-  cargarPendientes();
+    if (!respuesta.ok) throw new Error('No se pudo consultar el historial');
+    const contenido = await respuesta.text();
+    if (contenido === ultimaRespuesta) return;
+    ultimoHistorial = JSON.parse(contenido);
+    ultimaRespuesta = contenido;
+    operacionWeb = ultimoHistorial.operacionWeb;
+    document.querySelectorAll('[data-operacion]').forEach((enlace) => {
+      enlace.classList.toggle('oculto', !operacionWeb);
+    });
+    if (operacionWeb && !escucharOperacion) {
+      escucharOperacion = true;
+      escucharMovimientos({ alActivo: cargar, alFirmado: cargar });
+    }
+    pintar();
+    pintarPendientes();
+  } catch {
+    avisar('No se pudo consultar el historial.', 'error');
+  } finally {
+    cargando = false;
+  }
 }
 
-// Lo que sigue en la calle: es la pregunta que el registro tiene que poder responder.
-function cargarPendientes() {
-  fetch('/api/entregas-pendientes', { cache: 'no-store' })
-    .then((r) => r.json())
-    .then((lista) => {
-      if (!lista.length) {
-        $('#pendientes').innerHTML = '';
-        return;
-      }
-      const piezas = lista.reduce((n, e) => n + e.pendientes.length, 0);
-      const detalle = lista
-        .map((e) => escapar(e.empleado) + ' (' + e.pendientes.length + ')')
-        .join(', ');
-      $('#pendientes').innerHTML =
-        '<div class="pendiente-aviso">Sin devolver: ' + piezas +
-        (piezas === 1 ? ' herramienta' : ' herramientas') + ' — ' + detalle + '</div>';
-    })
-    .catch(() => {});
+function pintarPendientes() {
+  const lista = ultimoHistorial.grupos.filter((g) => g.entrega.estado === 'firmado' && g.pendientes.length);
+  const piezas = lista.reduce((n, g) => n + g.pendientes.length, 0);
+  const detalle = lista.map((g) => escapar(g.entrega.empleado) + ' (' + g.pendientes.length + ')').join(', ');
+  $('#pendientes').innerHTML = piezas
+    ? '<div class="pendiente-aviso">Sin devolver: ' + piezas +
+      (piezas === 1 ? ' herramienta. ' : ' herramientas. ') + detalle + '</div>'
+    : '';
 }
 
 cargar();
-
-escucharMovimientos({ alActivo: cargar, alFirmado: cargar });
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) cargar();
+});
+setInterval(() => {
+  if (!document.hidden) cargar();
+}, 15000);
 </script>
 </body>
 </html>

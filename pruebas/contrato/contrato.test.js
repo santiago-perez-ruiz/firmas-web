@@ -40,7 +40,7 @@ const detallada = {
   ],
 };
 
-async function conServidor(datos, ejecutar, clave = '') {
+async function conServidor(datos, ejecutar, clave = '', retirarOperacion = '') {
   // El sistema asigna y reserva el puerto en la misma operación de escucha.
   // Interceptamos listen únicamente en el hijo para limitarlo a loopback.
   const arranque = `
@@ -54,7 +54,7 @@ async function conServidor(datos, ejecutar, clave = '') {
   `;
   const hijo = spawn(process.execPath, ['-e', arranque], {
     cwd: raiz,
-    env: { DATA_DIR: datos, CLAVE_ACCESO: clave, TZ: 'America/Bogota' },
+    env: { DATA_DIR: datos, CLAVE_ACCESO: clave, RETIRAR_OPERACION_WEB: retirarOperacion, TZ: 'America/Bogota' },
     stdio: ['ignore', 'ignore', 'pipe', 'ipc'],
   });
   let errores = '';
@@ -305,4 +305,117 @@ test('Acceso actual con clave sintética compartida', async (t) => {
       await lector.cancel();
     }
   }, clave);
+});
+
+test('La operación web continúa hasta activar el corte', async (t) => {
+  const datos = await fs.mkdtemp(path.join(os.tmpdir(), 'firmas-corte-'));
+  t.after(() => fs.rm(datos, { recursive: true, force: true }));
+  const paginas = ['/rapida', '/detallada', '/detallada.html', '/firmar', '/firmar.html', '/index.html'];
+
+  await conServidor(datos, async (pedir) => {
+    for (const ruta of paginas) assert.equal((await pedir(ruta)).status, 200, ruta);
+    assert.equal((await json(pedir, '/api/historial?completo=1')).operacionWeb, true);
+    await firmar(pedir, (await alta(pedir, rapida)).id);
+  });
+
+  await conServidor(datos, async (pedir) => {
+    for (const ruta of [...paginas, '/%66irmar.html', '/%2Fdetallada.html', '/%69ndex.html']) {
+      assert.equal((await pedir(ruta)).status, 404, ruta);
+    }
+    const inicio = await pedir('/', { redirect: 'manual' });
+    assert.equal(inicio.status, 302);
+    assert.equal(inicio.headers.get('location'), '/registros');
+    assert.equal((await pedir('/registros')).status, 200);
+    assert.equal((await pedir('/registros.html')).status, 200);
+    for (const ruta of ['/api/entregas-pendientes', '/api/declaraciones', '/api/activo', '/api/eventos']) {
+      assert.equal((await json(pedir, ruta, 404)).codigo, 'RUTA_RETIRADA');
+    }
+    for (const cuerpo of [rapida, detallada, { tipo: 'DEVOLUCION' }, { tipo: 'CAMBIO' }]) {
+      await json(pedir, '/api/movimientos', 404, post(cuerpo));
+    }
+    await firmar(pedir, 1, firmas, 404);
+    await json(pedir, '/api/movimientos/1/cancelar', 404, post({}));
+    const historial = await json(pedir, '/api/historial?completo=1');
+    assert.equal(historial.operacionWeb, false);
+    assert.equal(historial.grupos.length, 1);
+    assert.equal((await json(pedir, '/api/movimientos')).length, 1);
+    await comprobarArchivos(pedir, historial.grupos[0].entrega);
+  }, '', '1');
+});
+
+test('Historial completo y descargas con 1.001 recepciones, devolución y cambio en la más antigua', async (t) => {
+  const datos = await fs.mkdtemp(path.join(os.tmpdir(), 'firmas-volumen-'));
+  t.after(() => fs.rm(datos, { recursive: true, force: true }));
+  await conServidor(datos, async (pedir) => {
+    const herramientas = Array.from({ length: 100 }, (_, i) => ({
+      descripcion: 'Herramienta sintética ' + (i + 1), estado: 'Bueno', observaciones: 'Nota sintética',
+    }));
+    const antigua = await alta(pedir, { ...detallada, herramientas });
+    await firmar(pedir, antigua.id);
+
+    const base = new Database(path.join(datos, 'firmas.db'));
+    try {
+      const insertar = base.prepare(`
+        INSERT INTO movimientos (codigo, tipo, empleado, herramientas, estado, creado_en, firmado_en)
+        VALUES (?, 'ENTREGA', 'Empleado sintético de volumen', ?, 'firmado', ?, ?)
+      `);
+      base.transaction(() => {
+        const fecha = '2020-02-01T13:01:00.000Z';
+        for (let i = 1; i <= 1000; i++) {
+          insertar.run('TRX-2020-' + i, JSON.stringify([{ id: 1, descripcion: 'Martillo sintético' }]), fecha, fecha);
+        }
+      })();
+    } finally {
+      base.close();
+    }
+
+    const cambio = await alta(pedir, {
+      tipo: 'CAMBIO', entregaId: antigua.id, herramientas: [
+        { id: 1, sentido: 'devuelve', estado: 'Bueno' },
+        { sentido: 'recibe', descripcion: 'Repuesto sintético', estado: 'Bueno' },
+      ],
+    });
+    await firmar(pedir, cambio.id);
+    const devolucion = await alta(pedir, {
+      tipo: 'DEVOLUCION', entregaId: antigua.id,
+      herramientas: [{ id: 101, estado: 'Bueno' }],
+    });
+    await firmar(pedir, devolucion.id);
+
+    const historial = await json(pedir, '/api/historial');
+    assert.equal(historial.grupos.length, 200);
+    assert.ok(!historial.grupos.some((g) => g.entrega.id === antigua.id));
+    const completo = await json(pedir, '/api/historial?completo=1');
+    assert.equal(completo.grupos.length, 1001);
+    const grupo = completo.grupos.at(-1);
+    assert.equal(grupo.entrega.id, antigua.id);
+    assert.deepEqual(grupo.devoluciones.map((d) => d.codigo), [cambio.codigo, devolucion.codigo]);
+    assert.equal(grupo.entrega.herramientas[0].cerradaPor, 'CAMBIO');
+    assert.equal(grupo.entrega.herramientas.at(-1).cerradaPor, 'DEVOLUCION');
+    assert.equal(grupo.pendientes.length, 99);
+
+    const excel = await pedir('/api/export.xlsx');
+    assert.equal(excel.status, 200);
+    const libro = new Excel.Workbook();
+    await libro.xlsx.load(Buffer.from(await excel.arrayBuffer()));
+    const registro = libro.getWorksheet('Registro de Firmas');
+    const codigos = registro.getColumn(1).values;
+    for (const codigo of [antigua.codigo, cambio.codigo, devolucion.codigo]) {
+      assert.ok(codigos.includes(codigo), codigo);
+    }
+    assert.equal(registro.getImages().length, 6);
+    assert.ok(registro.sheetProtection.sheet);
+    const informe = libro.getWorksheet('Informe Diario');
+    assert.equal(informe.getCell('A5').value, 1001);
+    assert.equal(informe.getCell('D5').value, 1099);
+    assert.equal(informe.getCell('G5').value, 2);
+    assert.ok(informe.getColumn('H').values.some((valor) => String(valor).includes('Repuesto sintético')));
+
+    const pdf = await pedir('/api/entregas/' + antigua.id + '/pdf');
+    assert.equal(pdf.status, 200);
+    const contenido = Buffer.from(await pdf.arrayBuffer());
+    assert.equal(contenido.subarray(0, 5).toString(), '%PDF-');
+    assert.equal((await pedir('/api/entregas/99999/pdf')).status, 404);
+    assert.equal((contenido.toString('latin1').match(/\/Type \/Page\b/g) || []).length, 5);
+  });
 });

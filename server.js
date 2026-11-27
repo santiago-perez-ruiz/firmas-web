@@ -9,13 +9,40 @@ const { construirPdf } = require('./src/pdf');
 
 const app = express();
 const PUERTO = Number(process.env.PORT || 3000);
+const operacionWeb = process.env.RETIRAR_OPERACION_WEB !== '1';
+const publico = path.join(__dirname, 'public');
+
+function soloOperacionWeb(req, res, next) {
+  if (operacionWeb) return next();
+  res.status(404).json({ codigo: 'RUTA_RETIRADA', error: 'La operación web está deshabilitada' });
+}
 
 app.use(express.json({ limit: '8mb' }));      // las firmas viajan como data URL PNG
 
 // La puerta va antes que los estaticos: si no, /firmar y el CSS se servirian sin pasar por ella.
 auth.instalar(app);
 
-app.use(express.static(path.join(__dirname, 'public'), { extensions: ['html'] }));
+app.get('/', (req, res) => res.redirect('/registros'));
+app.get('/rapida', (req, res) => {
+  if (!operacionWeb) return res.sendStatus(404);
+  res.sendFile(path.join(publico, 'index.html'));
+});
+app.use((req, res, next) => {
+  if (!operacionWeb) {
+    // express.static decodifica y normaliza la ruta antes de buscar el HTML.
+    let archivo;
+    try {
+      archivo = path.posix.normalize(decodeURIComponent(req.path)).replace(/\/+$/, '');
+    } catch {
+      return res.sendStatus(400);
+    }
+    if (/^\/(?:index\.html|detallada(?:\.html)?|firmar(?:\.html)?)$/i.test(archivo)) {
+      return res.sendStatus(404);
+    }
+  }
+  next();
+});
+app.use(express.static(publico, { extensions: ['html'], index: false }));
 app.use('/firmas', express.static(store.FIRMAS_DIR));
 
 // ------------------------------------------------------- avisos en vivo (SSE)
@@ -26,7 +53,7 @@ function avisar(evento, datos) {
   for (const res of clientes) res.write(carga);
 }
 
-app.get('/api/eventos', (req, res) => {
+app.get('/api/eventos', soloOperacionWeb, (req, res) => {
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache, no-transform',
@@ -64,20 +91,25 @@ function manejar(fn) {
   };
 }
 
-app.get('/api/activo', (req, res) => res.json(store.activo()));
+app.get('/api/activo', soloOperacionWeb, (req, res) => res.json(store.activo()));
 
 app.get('/api/movimientos', (req, res) => res.json(store.listar()));
 
-// Lo mismo, pero cada entrega con las devoluciones que la cierran. Es lo que pinta
-// /registros; /api/movimientos sigue plano porque de ahi sale el Excel.
-app.get('/api/historial', (req, res) => res.json(store.historial()));
+// El panel pide todos los grupos. La consulta sin parámetros conserva su límite.
+app.get('/api/historial', (req, res) => {
+  if (req.query.completo === '1') {
+    return res.json({ ...store.historial(-1), operacionWeb });
+  }
+  res.json(store.historial());
+});
 
 // Entregas firmadas con herramientas sin devolver: es la lista de la que se elige
 // al registrar una devolucion.
-app.get('/api/entregas-pendientes', (req, res) => res.json(store.entregasPendientes()));
+app.get('/api/entregas-pendientes', soloOperacionWeb, (req, res) => res.json(store.entregasPendientes()));
 
 app.post(
   '/api/movimientos',
+  soloOperacionWeb,
   manejar((req, res) => {
     const { tipo } = req.body || {};
     if (!['ENTREGA', 'DEVOLUCION', 'CAMBIO'].includes(tipo)) {
@@ -104,6 +136,7 @@ app.post(
 
 app.post(
   '/api/movimientos/:id/firmar',
+  soloOperacionWeb,
   manejar((req, res) => {
     const { firmaEmpleado, firmaResponsable } = req.body || {};
     if (!firmaEmpleado) throw new Error('Falta la firma del empleado');
@@ -116,6 +149,7 @@ app.post(
 
 app.post(
   '/api/movimientos/:id/cancelar',
+  soloOperacionWeb,
   manejar((req, res) => {
     store.cancelar(Number(req.params.id));
     avisar('activo', null);
@@ -129,8 +163,8 @@ app.get(
   '/api/entregas/:id/pdf',
   manejar((req, res) => {
     const id = Number(req.params.id);
-    const grupo = store.historial(1000).grupos.find((g) => g.entrega.id === id);
-    if (!grupo) throw new Error('No existe ese registro');
+    const grupo = store.historial(1, id).grupos[0];
+    if (!grupo) return res.status(404).json({ error: 'No existe ese registro' });
 
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${grupo.entrega.codigo}.pdf"`);
@@ -143,8 +177,8 @@ app.get(
   manejar(async (req, res) => {
     // Dos vistas del mismo historico: la lista plana llena la hoja de firmas y los
     // grupos, la del informe, que necesita saber que herramienta volvio y cual no.
-    const firmados = store.listar(1000).filter((m) => m.estado === 'firmado').reverse();
-    const libro = await construirLibro(firmados, store.historial(1000).grupos);
+    const firmados = store.listar(-1).filter((m) => m.estado === 'firmado').reverse();
+    const libro = await construirLibro(firmados, store.historial(-1).grupos);
     const hoy = new Date().toISOString().slice(0, 10);
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="Registro_Firmas_${hoy}.xlsx"`);
@@ -155,12 +189,15 @@ app.get(
 
 // El texto por defecto, para que la entrega detallada pueda partir de el en vez de
 // llevar una copia escrita en el HTML.
-app.get('/api/declaraciones', (req, res) => res.json(store.DECLARACIONES));
+app.get('/api/declaraciones', soloOperacionWeb, (req, res) => res.json(store.DECLARACIONES));
 
 app.get('/api/salud', (req, res) => res.json({ ok: true, conectados: clientes.size }));
 
 app.listen(PUERTO, '0.0.0.0', () => {
   console.log(`Pantalla de firma escuchando en http://0.0.0.0:${PUERTO}`);
-  console.log(`  Operador : http://localhost:${PUERTO}/`);
-  console.log(`  Tablet   : http://localhost:${PUERTO}/firmar`);
+  console.log(`  Registros: http://localhost:${PUERTO}/registros`);
+  if (operacionWeb) {
+    console.log(`  Operador : http://localhost:${PUERTO}/rapida`);
+    console.log(`  Tablet   : http://localhost:${PUERTO}/firmar`);
+  }
 });

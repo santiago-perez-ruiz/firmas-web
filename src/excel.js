@@ -20,7 +20,7 @@ const EMU_POR_PIXEL = 9525;   // la unidad en la que Excel ancla los dibujos
 function lineaHerramienta(h) {
   return `${h.cantidad || 1} x ${h.descripcion}` +
     (h.estado ? ` (${h.estado})` : '') +
-    (h.observaciones ? ` — ${h.observaciones}` : '');
+    (h.observaciones ? ` · ${h.observaciones}` : '');
 }
 
 const TIPO_VISIBLE = { ENTREGA: 'RECEPCIÓN', DEVOLUCION: 'DEVOLUCIÓN', CAMBIO: 'CAMBIO' };
@@ -84,7 +84,7 @@ async function construirLibro(movimientos, grupos = []) {
 
   ws.mergeCells('A1:L2');
   const titulo = ws.getCell('A1');
-  titulo.value = 'REGISTRO DE RECEPCIÓN Y DEVOLUCIÓN DE HERRAMIENTAS — FIRMAS DIGITALES';
+  titulo.value = 'REGISTRO DE RECEPCIÓN Y DEVOLUCIÓN DE HERRAMIENTAS · FIRMAS DIGITALES';
   titulo.font = { bold: true, size: 16, color: { argb: AZUL } };
   titulo.alignment = { horizontal: 'center', vertical: 'middle' };
   // Con la hoja protegida toda celda nace bloqueada; se desbloquean para que el
@@ -260,12 +260,12 @@ function agregarInformeDiario(wb, grupos) {
 
   // ----------------------------------------------------------- los dos bloques
   bloque(ws, 'A', 'D', ROJO,
-    '⚠️ EMPLEADOS CON HERRAMIENTAS PENDIENTES (NO DEVOLVIERON)',
+    'EMPLEADOS CON HERRAMIENTAS PENDIENTES (NO DEVOLVIERON)',
     ['Fecha', 'Empleado', 'Herramienta', 'Hora salida'],
     pendientes, 'Ninguna herramienta pendiente de devolución.');
 
   bloque(ws, 'F', 'I', VERDE,
-    '✅ EMPLEADOS QUE YA DEVOLVIERON LA HERRAMIENTA',
+    'EMPLEADOS QUE YA DEVOLVIERON LA HERRAMIENTA',
     ['Fecha', 'Empleado', 'Herramienta', 'Devuelta el'],
     devueltas, 'Todavía no hay devoluciones firmadas.');
 

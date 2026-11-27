@@ -9,19 +9,25 @@ teclado nunca aparece**.
 
 | Ruta         | Quién la usa | Para qué |
 |--------------|--------------|----------|
-| `/`          | Almacenista (PC) | **Recepción rápida por entrega diaria**: arma la recepción con los campos justos y la envía a la tablet |
+| `/rapida`    | Almacenista (PC) | **Recepción rápida por entrega diaria**: arma la recepción con los campos justos y la envía a la tablet |
 | `/detallada` | Almacenista (PC) | **Recepción detallada por herramienta asignada**: el formulario largo (código de empleado, observaciones por herramienta, declaración) |
 | `/firmar`    | Tablet       | Muestra el movimiento activo y captura las dos firmas |
-| `/registros` | Almacenista (PC) | Histórico agrupado por entrega, con las firmas, en dos pestañas (*Recepciones rápidas por entrega diaria* / *Recepciones detalladas por herramienta asignada*), y descarga a Excel |
+| `/registros` | Almacenista (PC) | Histórico agrupado por entrega, con las firmas, en dos pestañas (*Recepciones rápidas por entrega diaria* / *Recepciones detalladas por herramienta asignada*), Excel desde la lista y PDF desde el detalle |
+
+La ruta `/` redirige a `/registros`. La operación web sigue disponible por defecto.
+`RETIRAR_OPERACION_WEB=1`, en el entorno del proceso Node, retira los formularios web,
+la pantalla de firma y Gestionar recepción, incluidos los accesos directos a los HTML.
+También cierra las rutas operativas actuales de la API. El corte de #18 debe coordinar
+el acceso operativo de Android con la autorización de #13 antes de activar la opción.
 
 El envío a la tablet es instantáneo (Server-Sent Events); no hay que refrescar nada.
 Solo puede haber **un movimiento activo a la vez**: enviar uno nuevo cancela el anterior.
 
 ## Flujo de firma en la tablet
 
-1. El almacenista arma el movimiento. Una ENTREGA se escribe en `/`: empleado y
+1. El almacenista arma el movimiento. Una ENTREGA se escribe en `/rapida`: empleado y
    herramientas. Una DEVOLUCIÓN no se escribe: se abre su entrega en `/registros` y
-   se pulsa **Gestionar entrega**, que muestra lo que sigue fuera para marcar qué
+   se pulsa **Gestionar recepción**, que muestra lo que sigue fuera para marcar qué
    vuelve y en qué estado. En ambos casos se envía a la tablet.
 2. La tablet pasa sola de "Esperando" a la pantalla del movimiento, en verde si es
    ENTREGA y en ámbar si es DEVOLUCIÓN, con la lista de herramientas y la declaración.
@@ -36,7 +42,8 @@ cd firmas-web
 docker compose up -d --build
 ```
 
-- Operador: `http://localhost:8090/`
+- Registros: `http://localhost:8090/`
+- Recepción rápida: `http://localhost:8090/rapida`
 - Tablet:   `http://<IP-del-servidor>:8090/firmar`
 
 El puerto del equipo es el `8090` (dentro del contenedor sigue siendo el 3000). Si lo
@@ -124,7 +131,7 @@ Cuando el flujo vuelve a llegar, se apaga el sondeo solo.
 ## La devolución está atada a la entrega
 
 Una DEVOLUCIÓN no se escribe a mano: **se abre desde su entrega**. En `/registros` se
-entra en el registro y se pulsa **Gestionar entrega**; ahí aparece lo que sigue fuera,
+entra en el registro y se pulsa **Gestionar recepción**; ahí aparece lo que sigue fuera,
 ya marcado, y de la entrega salen solos el nombre, la cédula y el departamento. Lo único
 que se registra a mano es **en qué estado regresa cada herramienta**, que es el dato que
 la devolución aporta.

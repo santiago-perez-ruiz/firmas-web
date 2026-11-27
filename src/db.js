@@ -251,15 +251,21 @@ function entregasPendientes() {
  * Cada herramienta sale marcada con el movimiento que la cerro, de modo que la
  * pantalla no tiene que cruzar nada por su cuenta.
  */
-function historial(limite = 200) {
+function historial(limite = 200, entregaId = null) {
+  const entregaEspecifica = entregaId === null ? '' : 'AND id = @entregaId';
   const entregas = db
-    .prepare(`SELECT * FROM movimientos WHERE tipo = 'ENTREGA' AND estado <> 'cancelado' ORDER BY id DESC LIMIT ?`)
-    .all(limite)
+    .prepare(`SELECT * FROM movimientos WHERE tipo = 'ENTREGA' AND estado <> 'cancelado'
+              ${entregaEspecifica} ORDER BY id DESC LIMIT @limite`)
+    .all({ limite, entregaId })
     .map(normalizar);
 
+  const vinculadas = entregaId === null ? '' : 'AND entrega_id = @entregaId';
   const devoluciones = db
-    .prepare(`SELECT * FROM movimientos WHERE tipo IN ('DEVOLUCION', 'CAMBIO') AND estado <> 'cancelado' ORDER BY id`)
-    .all()
+    .prepare(
+      `SELECT * FROM movimientos WHERE tipo IN ('DEVOLUCION', 'CAMBIO') AND estado <> 'cancelado'
+        ${vinculadas} ORDER BY id`
+    )
+    .all({ entregaId })
     .map(normalizar);
 
   const porEntrega = new Map();

@@ -71,6 +71,12 @@ function construirPdf(grupo, res) {
   const util = doc.page.width - MARGEN * 2;
   let y = MARGEN;
 
+  function reservar(yy, alto) {
+    if (yy + alto <= doc.page.height - MARGEN) return yy;
+    doc.addPage();
+    return MARGEN;
+  }
+
   /** Escribe y devuelve la y siguiente. Nunca deja que pdfkit decida la posición. */
   function escribir(texto, x, yy, opciones) {
     doc.text(String(texto == null ? '' : texto), x, yy, Object.assign({ width: util }, opciones));
@@ -93,7 +99,7 @@ function construirPdf(grupo, res) {
     doc.font('Helvetica').fontSize(7.5).fillColor(TENUE);
     doc.text(rotulo.toUpperCase(), x, yy, { width: ancho, lineBreak: false });
     doc.font('Helvetica-Bold').fontSize(10.5).fillColor(TINTA);
-    doc.text(valor || '—', x, yy + 10, { width: ancho, lineBreak: false });
+    doc.text(valor || 'Sin dato', x, yy + 10, { width: ancho, lineBreak: false });
     doc.x = MARGEN;
     return yy + 25;
   }
@@ -124,11 +130,12 @@ function construirPdf(grupo, res) {
   }
 
   function parDeFirmas(mov, yy) {
+    yy = reservar(yy, ALTO_FIRMA + 18);
     const ancho = (util - 18) / 2;
     firma(mov.firma_empleado, MARGEN, yy, ancho,
-      'Firma del empleado' + (mov.empleado ? ' — ' + mov.empleado : ''));
+      'Firma del empleado' + (mov.empleado ? ' · ' + mov.empleado : ''));
     return firma(mov.firma_responsable, MARGEN + ancho + 18, yy, ancho,
-      'Firma del almacenista' + (mov.responsable ? ' — ' + mov.responsable : ''));
+      'Firma del almacenista' + (mov.responsable ? ' · ' + mov.responsable : ''));
   }
 
   /**
@@ -181,7 +188,7 @@ function construirPdf(grupo, res) {
 
     doc.x = MARGEN;
     const nota = [h.llegoEn ? 'entró en ' + h.llegoEn : '', h.observaciones || '']
-      .filter(Boolean).join('  —  ');
+      .filter(Boolean).join('  ·  ');
     if (!nota) return yy + ALTO_LINEA;
 
     doc.font('Helvetica-Oblique').fontSize(8).fillColor(TENUE);
@@ -225,12 +232,20 @@ function construirPdf(grupo, res) {
 
   // ------------------------------------------------------------- herramientas
   y = seccion('Herramientas recibidas', y);
-  for (const h of e.herramientas) y = lineaHerramienta(h, y);
+  for (const h of e.herramientas) {
+    y = reservar(y, ALTO_LINEA + (h.llegoEn || h.observaciones ? 11 : 0));
+    y = lineaHerramienta(h, y);
+  }
 
   // ------------------------------------------------------------- firmas
   if (e.estado === 'firmado') {
     // Lo que el empleado firmo, tal cual salio en la tablet. La entrega detallada
     // deja cambiarlo, asi que el comprobante no puede dar por hecho el de siempre.
+    doc.font('Helvetica-Oblique').fontSize(8);
+    const altoDeclaracion = doc.heightOfString(e.declaracion, { width: util });
+    const altoFirmas = ALTO_FIRMA + 18;
+    const altoBloque = 40 + altoDeclaracion + altoFirmas;
+    y = reservar(y, Math.min(altoBloque, doc.page.height - 2 * MARGEN));
     y = seccion('Firmas de la recepción', y);
     doc.font('Helvetica-Oblique').fontSize(8).fillColor(TENUE);
     doc.text(e.declaracion, MARGEN, y, { width: util });
@@ -241,24 +256,21 @@ function construirPdf(grupo, res) {
 
   /**
    * Un CAMBIO: lo que devuelve y lo que recibe, en dos listas, con su par de firmas.
-   * Como una devolución, no se parte entre dos páginas; `necesario` suma además los
-   * dos rótulos y la nota de cada línea que la lleve.
+   * El bloque se mantiene en una página cuando cabe. Las listas largas
+   * continúan en otra página y las dos firmas quedan juntas.
    */
   function cambio(d, yy) {
     const devuelve = d.herramientas.filter((h) => h.sentido === 'devuelve');
     const recibe = d.herramientas.filter((h) => h.sentido === 'recibe');
     const lineas = [
-      ['Devuelve', devuelve, (h) => (h.estado ? `  —  regresa ${h.estado}` : '')],
+      ['Devuelve', devuelve, (h) => (h.estado ? `  ·  regresa ${h.estado}` : '')],
       ['Recibe', recibe, (h) => (h.estado ? `  (${h.estado})` : '')],
     ];
 
     const conNota = d.herramientas.filter((h) => h.observaciones).length;
     const necesario = 46 + d.herramientas.length * ALTO_LINEA + conNota * 11 + 2 * 14 +
       (d.observaciones ? 14 : 0) + ALTO_FIRMA + 40;
-    if (yy + necesario > doc.page.height - MARGEN - 30) {
-      doc.addPage();
-      yy = MARGEN;
-    }
+    yy = reservar(yy, necesario <= doc.page.height - 2 * MARGEN ? necesario : 85);
 
     yy = seccion('Cambio ' + d.codigo, yy);
     doc.font('Helvetica').fontSize(8.5).fillColor(TENUE);
@@ -268,11 +280,13 @@ function construirPdf(grupo, res) {
     yy += 16;
 
     for (const [rotulo, lista, cola] of lineas) {
+      yy = reservar(yy, 14 + ALTO_LINEA + 11);
       doc.font('Helvetica-Bold').fontSize(8).fillColor(TENUE);
       doc.text(rotulo.toUpperCase(), MARGEN + 16, yy, { width: util - 16, lineBreak: false, characterSpacing: 0.6 });
       doc.x = MARGEN;
       yy += 14;
       for (const h of lista) {
+        yy = reservar(yy, ALTO_LINEA + (h.observaciones ? 11 : 0));
         doc.font('Helvetica').fontSize(9.5).fillColor(TINTA);
         doc.text(`${h.cantidad || 1} × ${h.descripcion}` + cola(h),
           MARGEN + 16, yy, { width: util - 16, lineBreak: false });
@@ -288,6 +302,7 @@ function construirPdf(grupo, res) {
     }
 
     if (d.observaciones) {
+      yy = reservar(yy, 14);
       doc.font('Helvetica-Oblique').fontSize(8.5).fillColor(TENUE);
       doc.text(d.observaciones, MARGEN + 16, yy, { width: util - 16, lineBreak: false });
       doc.x = MARGEN;
@@ -304,12 +319,9 @@ function construirPdf(grupo, res) {
       continue;
     }
 
-    // Una devolución no debe partirse entre dos páginas.
-    const necesario = 46 + d.herramientas.length * ALTO_LINEA + ALTO_FIRMA + 40;
-    if (y + necesario > doc.page.height - MARGEN - 30) {
-      doc.addPage();
-      y = MARGEN;
-    }
+    const necesario = 46 + d.herramientas.length * ALTO_LINEA + ALTO_FIRMA + 40 +
+      (d.observaciones ? 14 : 0);
+    y = reservar(y, necesario <= doc.page.height - 2 * MARGEN ? necesario : 55);
 
     y = seccion('Devolución ' + d.codigo, y);
     doc.font('Helvetica').fontSize(8.5).fillColor(TENUE);
@@ -319,14 +331,16 @@ function construirPdf(grupo, res) {
     y += 16;
 
     for (const h of d.herramientas) {
+      y = reservar(y, ALTO_LINEA);
       doc.font('Helvetica').fontSize(9.5).fillColor(TINTA);
-      doc.text(`${h.cantidad || 1} × ${h.descripcion}` + (h.estado ? `  —  regresa ${h.estado}` : ''),
+      doc.text(`${h.cantidad || 1} × ${h.descripcion}` + (h.estado ? `  ·  regresa ${h.estado}` : ''),
         MARGEN + 16, y, { width: util - 16, lineBreak: false });
       doc.x = MARGEN;
       y += ALTO_LINEA;
     }
 
     if (d.observaciones) {
+      y = reservar(y, 14);
       doc.font('Helvetica-Oblique').fontSize(8.5).fillColor(TENUE);
       doc.text(d.observaciones, MARGEN + 16, y, { width: util - 16, lineBreak: false });
       doc.x = MARGEN;
