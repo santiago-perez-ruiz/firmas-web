@@ -1,0 +1,3 @@
+<resources>
+    <string name="servidor_https">Dirección HTTPS del servidor</string>
+</resources>

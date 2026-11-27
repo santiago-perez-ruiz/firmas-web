@@ -5,7 +5,8 @@
   "main": "server.js",
   "type": "commonjs",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node --test pruebas/contrato/"
   },
   "dependencies": {
     "better-sqlite3": "^11.7.0",

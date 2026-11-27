@@ -70,7 +70,7 @@ async function conServidor(datos, ejecutar, clave = '') {
     const base = `http://127.0.0.1:${puerto}`;
     await ejecutar((ruta, opciones) => fetch(base + ruta, {
       signal: AbortSignal.timeout(10_000), ...opciones,
-    }));
+    }), base);
   } finally {
     hijo.kill();
     await cerrado;
@@ -305,4 +305,68 @@ test('Acceso actual con clave sintética compartida', async (t) => {
       await lector.cancel();
     }
   }, clave);
+});
+
+// La suite normal de Node funciona sin SDK. Esta prueba ejecuta el cliente Kotlin
+// contra el mismo servidor aislado que usan los casos del contrato.
+test('Cliente Kotlin contra el servidor local con SQLite temporal', {
+  skip: !process.env.FIRMAS_GRADLE_PRUEBAS && 'Requiere FIRMAS_GRADLE_PRUEBAS con la ruta a Gradle',
+}, async (t) => {
+  const datos = await fs.mkdtemp(path.join(os.tmpdir(), 'firmas-kotlin-'));
+  t.after(() => fs.rm(datos, { recursive: true, force: true }));
+  await conServidor(datos, async (_pedir, base) => {
+    const gradle = spawn(process.env.FIRMAS_GRADLE_PRUEBAS, [
+      '-p', 'android', '--no-daemon', ':comun:test',
+    ], {
+      cwd: raiz,
+      env: { ...process.env, FIRMAS_URL_PRUEBAS: base },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let salida = '';
+    gradle.stdout.on('data', (dato) => { salida += dato; });
+    gradle.stderr.on('data', (dato) => { salida += dato; });
+    const [codigo] = await once(gradle, 'close');
+    assert.equal(codigo, 0, salida);
+  });
+});
+
+test('La tablet observa un ID estable y publica dos PNG distintos para ese movimiento', async (t) => {
+  const datos = await fs.mkdtemp(path.join(os.tmpdir(), 'firmas-tablet-'));
+  t.after(() => fs.rm(datos, { recursive: true, force: true }));
+  const pngEmpleado = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAQAAABeK7cBAAAADUlEQVR4nGPg/8/AAAADPgEPpjFeOQAAAABJRU5ErkJggg==',
+    'base64'
+  );
+  const pngAlmacenista = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAQAAABeK7cBAAAADUlEQVR4nGNgYHD7DwABkAFGdxMcdAAAAABJRU5ErkJggg==',
+    'base64'
+  );
+  const dosFirmas = {
+    firmaEmpleado: 'data:image/png;base64,' + pngEmpleado.toString('base64'),
+    firmaResponsable: 'data:image/png;base64,' + pngAlmacenista.toString('base64'),
+  };
+
+  await conServidor(datos, async (pedir) => {
+    assert.equal(await json(pedir, '/api/activo'), null);
+    const enEspera = await alta(pedir, detallada);
+    const activo = await json(pedir, '/api/activo');
+    assert.equal(activo.id, enEspera.id);
+    assert.equal(activo.declaracion, detallada.declaracion);
+    assert.equal((await json(pedir, '/api/activo')).id, activo.id);
+    const confirmado = await firmar(pedir, activo.id, dosFirmas);
+    assert.equal(confirmado.id, activo.id);
+    assert.equal(confirmado.estado, 'firmado');
+    assert.ok(confirmado.firmado_en);
+    assert.equal(await json(pedir, '/api/activo'), null);
+    const siguiente = await alta(pedir, rapida);
+    await firmar(pedir, activo.id, dosFirmas, 400);
+    assert.equal((await json(pedir, '/api/activo')).id, siguiente.id);
+    for (const [url, esperado] of [
+      [confirmado.firmaEmpleadoUrl, pngEmpleado], [confirmado.firmaResponsableUrl, pngAlmacenista],
+    ]) {
+      const archivo = await pedir(url);
+      assert.equal(archivo.status, 200);
+      assert.deepEqual(Buffer.from(await archivo.arrayBuffer()), esperado);
+    }
+  });
 });
