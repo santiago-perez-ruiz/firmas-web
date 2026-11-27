@@ -1,17 +1,16 @@
-# Tunel con nombre y dominio propio: la URL NO cambia al reiniciar.
-#
-#   1. En Cloudflare Zero Trust > Networks > Tunnels, cree un tunel y copie su token.
-#   2. Pongalo en .env como CLOUDFLARE_TUNNEL_TOKEN=...
-#   3. En el panel del tunel, apunte el hostname publico a http://firmas:3000
-#   4. docker compose -f docker-compose.yml -f docker-compose.tunel-fijo.yml up -d
-#
-# Requiere una cuenta de Cloudflare con un dominio. Encima de esto se puede
-# activar Cloudflare Access para exigir correo corporativo antes de entrar.
-
+# Configuración de un túnel con nombre administrado desde Cloudflare.
+# Las rutas, las políticas de Access y los límites públicos se definen en Cloudflare.
 services:
   firmas:
+    ports: !reset []
     environment:
-      CLAVE_ACCESO: ${CLAVE_ACCESO:?Defina CLAVE_ACCESO en el archivo .env antes de publicar}
+      ACCESO_MODO: roles
+      ACCESS_EMISOR: ${ACCESS_EMISOR:?Defina el emisor de Cloudflare Access}
+      ACCESS_AUDIENCIA: ${ACCESS_AUDIENCIA:?Defina el AUD de la aplicación de Access}
+      ACCESS_ADMINISTRADORES: ${ACCESS_ADMINISTRADORES:?Defina las cuentas administrativas}
+      ACCESS_OPERADORES: ${ACCESS_OPERADORES:-}
+      HOST_PANEL: ${HOST_PANEL:?Defina el hostname del panel}
+      HOST_MOVIL: ${HOST_MOVIL:?Defina el hostname móvil}
 
   tunel:
     image: cloudflare/cloudflared:latest
@@ -19,4 +18,6 @@ services:
     restart: unless-stopped
     depends_on:
       - firmas
-    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN:?Falta CLOUDFLARE_TUNNEL_TOKEN en .env}
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:?Defina el token del túnel}
+    command: tunnel --no-autoupdate run

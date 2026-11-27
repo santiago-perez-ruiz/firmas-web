@@ -1,10 +1,9 @@
 # Contrato HTTP para la app móvil
 
-La columna «Permiso móvil» describe el contrato de destino. Las identidades, la
-vinculación, la revocación y los filtros por rol quedan pendientes de #13. El
-turno con conflicto, la lectura por ID y la publicación de ambas firmas quedan
-pendientes de #14. Los [casos ejecutables](../pruebas/contrato/README.md) fijan el
-comportamiento disponible en el servidor de #12.
+La columna «Permiso móvil» describe el contrato de destino. El turno con
+conflicto, la lectura de estado por ID y la publicación de ambas firmas
+corresponden a #14. Los [casos ejecutables](../pruebas/contrato/README.md)
+cubren el contrato de movimientos y la autorización por rol.
 
 ## Rutas
 
@@ -14,7 +13,7 @@ enteros y las fechas de creación y firma son cadenas ISO 8601 en UTC.
 
 | Método y ruta | Permiso móvil | Cuerpo y respuesta |
 | --- | --- | --- |
-| `GET /api/salud` | Comprobación de dirección y servicio, pública si se habilita | Sin cuerpo. Exponer como máximo `{"ok":true}` al público. Hoy también devuelve `conectados` (número de conexiones SSE). |
+| `GET /api/salud` | Comprobación de dirección y servicio, pública si se habilita | Sin cuerpo. Devuelve `{"ok":true}`. |
 | `GET /api/declaraciones` | Operación | Sin cuerpo. Objeto con cadenas para `ENTREGA`, `DEVOLUCION` y `CAMBIO`. |
 | `GET /api/entregas-pendientes` | Operación | Sin cuerpo. Lista de recepciones firmadas con al menos una herramienta pendiente, de más reciente a más antigua. Cada movimiento añade `pendientes` (lista de líneas). |
 | `GET /api/historial` | Administración | Sin cuerpo. `{grupos, sueltas}`, descrito abajo. |
@@ -22,22 +21,63 @@ enteros y las fechas de creación y firma son cadenas ISO 8601 en UTC.
 | `GET /api/entregas/:id/pdf` | Administración | Sin cuerpo. PDF adjunto del grupo de la recepción, con nombre `<codigo>.pdf`. La búsqueda actual abarca las últimas 1.000 recepciones sin cancelar. |
 | `GET /api/export.xlsx` | Administración | Sin cuerpo. XLSX adjunto `Registro_Firmas_YYYY-MM-DD.xlsx`, con las hojas Registro de Firmas e Informe Diario. La hoja de firmas filtra después de obtener los 1.000 movimientos más recientes sin cancelar. El informe parte de hasta 1.000 grupos. |
 | `GET /firmas/:archivo` | Administración con acceso al registro | Sin cuerpo. PNG de una URL relativa devuelta por la API. |
-| `GET /api/activo` | Operación y tablet vinculada | Sin cuerpo. Movimiento en espera o `null`. La tablet recibe el movimiento únicamente si está asignado a ella, con `Cache-Control: no-store` (#13 y #14). Hoy cualquier sesión con acceso obtiene el movimiento completo. |
+| `GET /api/activo` | Operación y tablet vinculada | Sin cuerpo. Movimiento en espera o `null`. La tablet recibe el movimiento únicamente si está asignado a ella, con `Cache-Control: no-store`. |
 | `POST /api/movimientos` | Operación | Alta descrita abajo. `201` con el movimiento en estado `esperando`. En #14, `409` si hay un activo. Hoy una nueva alta válida cancela el anterior. |
 | `GET /api/movimientos/:id/estado` | Operación y tablet autorizada para ese movimiento | Sin cuerpo. `{id, codigo, estado, firmado_en}`, incluso si ya salió del activo. `firmado_en` es `null` mientras falte la firma. Pendiente de #14, con permisos de #13. |
 | `POST /api/movimientos/:id/firmar` | Tablet autorizada para el movimiento | `{firmaEmpleado, firmaResponsable}`, dos cadenas data URL `data:image/png;base64,...`. `200` con el movimiento firmado. Hoy la del responsable es opcional y el servidor decodifica sin comprobar el formato de imagen. |
 | `POST /api/movimientos/:id/cancelar` | Operación | Sin cuerpo. `200` y `{"ok":true}`. Solo cambia el ID indicado si está esperando. Hoy también devuelve éxito y emite un aviso si no modificó ninguna fila. |
-| `GET /api/eventos` | Sesiones autorizadas en LAN durante la transición | Sin cuerpo. SSE `text/event-stream`, con `latido` (`{}`) cada 8 s, `activo` (movimiento o `null`) y `firmado` (movimiento). Si se conserva, filtrar por rol y tratar cada aviso como señal para consultar. |
-| `POST /api/dispositivos/vincular` | Equipo en provisión con código de un solo uso | Propuesta para #13. `{"codigo":"..."}` y `200` con `{dispositivoId, credencial}`. La credencial es revocable y se guarda con protección de Android Keystore. |
-| `GET /api/dispositivos/sesion` | Sesión móvil autenticada | Ruta propuesta para #13. Sin cuerpo. `200` con `{dispositivoId, rol}` para comprobar acceso tras probar la dirección con salud. |
+| `GET /api/eventos` | Sesiones autorizadas en LAN durante la transición | Sin cuerpo. SSE `text/event-stream`, con `latido` (`{}`) cada 8 s, `activo` (movimiento o `null`) y `firmado`. En modo roles, administración recibe avisos sin contenido y operación recibe el activo y un resumen de la firma. Android usa sondeo. |
+| `POST /api/dispositivos/codigos` | Administración | Sin cuerpo. `201` con `{dispositivoId, codigo, caduca}`. `409 DISPOSITIVO_OCUPADO` si ya hay una tablet vinculada o un código vigente. |
+| `POST /api/dispositivos/vincular` | Equipo en provisión con código de un solo uso | `{"codigo":"..."}` y `200` con `{dispositivoId, credencial}`. Un código vencido, consumido o desconocido devuelve `401`. Un exceso de solicitudes devuelve `429` con `Retry-After`. |
+| `GET /api/dispositivos/sesion` | Operación y tablet vinculada | Sin cuerpo. `200` con `{dispositivoId, rol}`. En operación, `dispositivoId` es `null`. |
+| `POST /api/dispositivos/:id/revocar` | Administración | Sin cuerpo. `200` con `{"ok":true}`. Acepta el ID entregado al emitir el código. |
 
-Para las dos rutas de provisión, los nombres de campos y la forma de presentar la
-credencial quedan por confirmar en #13. Operación requiere además identidad
-individual. Administración usa identidad corporativa con Cloudflare Access.
-Hoy, con clave compartida configurada, `POST /entrar` acepta `{clave}` y devuelve
-`{ok:true}` y la cookie de sesión. Una API sin sesión recibe `401` y los
-estáticos redirigen a `/entrar`. Salud queda pública. Sin clave el servidor
-actual permite todas las rutas disponibles.
+## Identidad y provisión
+
+- En el panel, Cloudflare Access gestiona el inicio de sesión del navegador y
+  envía `Cf-Access-Jwt-Assertion` al origen. Express valida el JWT firmado,
+  su emisor, audiencia y caducidad. El correo de la identidad debe estar
+  autorizado para uno de los dos roles humanos.
+- En Android, operación envía su JWT individual de Access en
+  `Authorization: Bearer <jwt>`. La obtención y renovación del JWT desde
+  Android dependen de la integración con el proveedor de identidad del piloto.
+  El servidor devuelve `rol: "operacion"` para una identidad autorizada.
+- Administración emite un código al preparar la tablet. El código distingue
+  mayúsculas de minúsculas, tiene 16 caracteres base64url y dura 10 minutos.
+  Escanearlo o introducirlo en ajustes protegidos. Android guarda la
+  credencial devuelta usando la protección de Android Keystore y envía
+  `Authorization: Bearer <credencial>`. La sesión devuelve `rol: "tablet"`.
+- Se admite una sola tablet vinculada. Sus movimientos son los creados desde
+  la vinculación, incluso tras reiniciar. Vincular antes de abrir el primer turno.
+  Si se pierde la respuesta de vinculación o se reemplaza el equipo, revocar el
+  ID entregado al emitir el código y emitir otro. Si queda un movimiento en
+  espera asignado a la tablet anterior, operación lo cancela y vuelve a crearlo.
+- Con `ACCESO_MODO=legado` y `CLAVE_ACCESO`, el cliente de contingencia usa
+  `POST /entrar` con `{clave}` y recibe la cookie anterior. Definir solo
+  `CLAVE_ACCESO` también selecciona ese modo para los Compose anteriores.
+  Sin esa variable, el modo por defecto es `roles`.
+
+## Túnel con nombre
+
+`docker-compose.tunel-fijo.yml` usa un túnel administrado desde Cloudflare
+y retira la publicación del puerto de origen del Compose base. Requiere una
+versión de Compose con soporte para `!reset`. [Referencia de Docker Compose](https://docs.docker.com/reference/compose-file/merge/#reset-value).
+
+Configurar fuera del repositorio `CLOUDFLARE_TUNNEL_TOKEN`, los hostnames
+`HOST_PANEL` y `HOST_MOVIL`, `ACCESS_EMISOR` (origen HTTPS del equipo
+Cloudflare Access), `ACCESS_AUDIENCIA` (AUD de la aplicación del panel),
+`ACCESS_ADMINISTRADORES` y `ACCESS_OPERADORES` (listas de correos separados
+por comas). Configurar Access en el panel con el proveedor corporativo y
+preservar el encabezado `Host` original hacia Express.
+[Validación de JWT de Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/authorization-cookie/validating-json/).
+
+En las rutas publicadas del túnel, dirigir el panel protegido y el hostname
+móvil a `http://firmas:3000`. En el hostname móvil, publicar únicamente las
+rutas de salud, vinculación, sesión y operaciones móviles indicadas en la
+tabla. Configurar un límite de intentos por cliente en el borde para la
+vinculación y desactivar la caché de la aplicación en ambos hosts. El límite
+local de vinculación es de 12 solicitudes por minuto para todo el proceso.
+[Enrutamiento de Cloudflare Tunnel](https://developers.cloudflare.com/tunnel/concepts/routing/).
 
 ## Alta y representación de movimientos
 

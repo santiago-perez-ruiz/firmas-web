@@ -10,10 +10,11 @@ const { construirPdf } = require('./src/pdf');
 const app = express();
 const PUERTO = Number(process.env.PORT || 3000);
 
-app.use(express.json({ limit: '8mb' }));      // las firmas viajan como data URL PNG
+const json = express.json({ limit: '8mb' }); // Las firmas viajan como data URL PNG.
 
 // La puerta va antes que los estaticos: si no, /firmar y el CSS se servirian sin pasar por ella.
-auth.instalar(app);
+const confirmarSesion = auth.instalar(app, store, express.json({ limit: '2kb' }));
+app.use(json, confirmarSesion, auth.errorSolicitud);
 
 app.use(express.static(path.join(__dirname, 'public'), { extensions: ['html'] }));
 app.use('/firmas', express.static(store.FIRMAS_DIR));
@@ -23,13 +24,25 @@ const clientes = new Set();
 
 function avisar(evento, datos) {
   const carga = `event: ${evento}\ndata: ${JSON.stringify(datos ?? null)}\n\n`;
-  for (const res of clientes) res.write(carga);
+  for (const res of clientes) {
+    const identidad = res.req.identidad;
+    if (identidad && identidad.caduca <= Date.now()) {
+      res.end();
+    } else if (identidad?.rol === 'administracion') {
+      res.write(`event: ${evento}\ndata: null\n\n`);
+    } else if (identidad && evento === 'firmado') {
+      const { id, codigo, empleado } = datos;
+      res.write(`event: firmado\ndata: ${JSON.stringify({ id, codigo, empleado })}\n\n`);
+    } else {
+      res.write(carga);
+    }
+  }
 }
 
 app.get('/api/eventos', (req, res) => {
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
-    'Cache-Control': 'no-cache, no-transform',
+    'Cache-Control': 'no-store, no-transform',
     Connection: 'keep-alive',
     'X-Accel-Buffering': 'no',
   });
@@ -42,7 +55,10 @@ app.get('/api/eventos', (req, res) => {
   // El latido es un evento con nombre y no un comentario: EventSource descarta los
   // comentarios, y el cliente necesita ver senales para distinguir un flujo vivo de
   // uno que se quedo atascado en un proxy.
-  const latir = () => res.write('event: latido\ndata: {}\n\n');
+  const latir = () => {
+    if (req.identidad?.caduca <= Date.now()) return res.end();
+    res.write('event: latido\ndata: {}\n\n');
+  };
   latir();
   const latido = setInterval(latir, 8000);
   req.on('close', () => {
@@ -64,7 +80,7 @@ function manejar(fn) {
   };
 }
 
-app.get('/api/activo', (req, res) => res.json(store.activo()));
+app.get('/api/activo', (req, res) => res.json(auth.movimientoVisible(req, store.activo())));
 
 app.get('/api/movimientos', (req, res) => res.json(store.listar()));
 
@@ -97,6 +113,7 @@ app.post(
     }
 
     const mov = store.crearYActivar({ ...req.body, herramientas });
+    res.locals.movimientoId = mov.id;
     avisar('activo', mov);
     res.status(201).json(mov);
   })
@@ -157,7 +174,7 @@ app.get(
 // llevar una copia escrita en el HTML.
 app.get('/api/declaraciones', (req, res) => res.json(store.DECLARACIONES));
 
-app.get('/api/salud', (req, res) => res.json({ ok: true, conectados: clientes.size }));
+app.get('/api/salud', (req, res) => res.json({ ok: true }));
 
 app.listen(PUERTO, '0.0.0.0', () => {
   console.log(`Pantalla de firma escuchando en http://0.0.0.0:${PUERTO}`);

@@ -538,6 +538,17 @@ function cancelar(id) {
   db.prepare(`UPDATE movimientos SET estado = 'cancelado' WHERE id = ? AND estado = 'esperando'`).run(id);
 }
 
+db.exec(`
+  CREATE TABLE IF NOT EXISTS dispositivos (
+    id TEXT PRIMARY KEY,
+    codigo_hash TEXT UNIQUE,
+    codigo_caduca INTEGER,
+    credencial_hash TEXT UNIQUE,
+    primer_movimiento INTEGER,
+    revocado_en INTEGER
+  )
+`);
+
 module.exports = {
   db, DATA_DIR, FIRMAS_DIR, DECLARACIONES,
   crearYActivar, obtener, activo, listar, firmar, cancelar,
